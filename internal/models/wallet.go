@@ -16,8 +16,8 @@ const (
 
 type Wallet struct {
 	ID         int64           `gorm:"primaryKey"`
-	UserID     int64           `gorm:"not null;uniqueIndex"`
-	WalletType WalletType      `gorm:"type:wallet_type;not null"`
+	UserID     int64           `gorm:"not null;uniqueIndex:idx_wallets_user_type"`
+	WalletType WalletType      `gorm:"type:wallet_type;not null;uniqueIndex:idx_wallets_user_type"`
 	Freezed    bool            `gorm:"not null;default:false"`
 	Balance    decimal.Decimal `gorm:"type:numeric(12,2);not null;default:0"`
 	CreatedAt  time.Time

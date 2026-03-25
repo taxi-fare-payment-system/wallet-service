@@ -13,7 +13,9 @@ import (
 
 	"wallet_service/internal/config"
 	"wallet_service/internal/db"
+	"wallet_service/internal/handlers"
 	"wallet_service/internal/httpx"
+	"wallet_service/internal/repository"
 )
 
 func main() {
@@ -35,6 +37,9 @@ func main() {
 	defer database.SQL.Close()
 
 	mux := http.NewServeMux()
+	walletRepo := repository.NewWalletRepository(database.Gorm)
+	walletHandlers := &handlers.WalletHandlers{WalletRepo: walletRepo}
+
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -53,6 +58,11 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
+
+	// Wallet APIs (Milestone 2)
+	mux.HandleFunc("GET /{id}", walletHandlers.GetWallet)
+	mux.HandleFunc("GET /users/{userId}", walletHandlers.GetWalletByUser)
+	mux.HandleFunc("POST /", walletHandlers.CreateWallet)
 
 	handler := httpx.RequestIDMiddleware(httpx.AccessLogMiddleware(logger)(mux))
 

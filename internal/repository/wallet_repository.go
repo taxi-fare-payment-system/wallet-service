@@ -36,6 +36,12 @@ func (r *WalletRepository) GetByUserID(ctx context.Context, userID int64) (model
 	return w, err
 }
 
+func (r *WalletRepository) GetByUserIDAndType(ctx context.Context, userID int64, walletType models.WalletType) (models.Wallet, error) {
+	var w models.Wallet
+	err := r.db.WithContext(ctx).First(&w, "user_id = ? AND wallet_type = ?", userID, walletType).Error
+	return w, err
+}
+
 func (r *WalletRepository) Create(ctx context.Context, w *models.Wallet) error {
 	return r.db.WithContext(ctx).Create(w).Error
 }
