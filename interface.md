@@ -293,6 +293,55 @@ Note: pay-fare requires trip validation to be configured (`TRIP_SERVICE_BASE_URL
 
 ---
 
+## Admin: find wallets
+
+### `GET /admin/wallets`
+
+- **Description**: admin-only wallet search with filtering, sorting, and pagination
+- **Headers**:
+  - `X-Admin-User-Id` (**required**): admin user id (int64)
+- **Query params**:
+  - **filters**:
+    - `user_id` (int64)
+    - `wallet_type` (`passenger|driver|owner`)
+    - `freezed` (`true|false`)
+    - `min_balance` (decimal string)
+    - `max_balance` (decimal string)
+  - **sorting**:
+    - `sort` = `id` (default) | `balance` | `created_at` | `updated_at`
+    - `order` = `desc` (default) | `asc`
+  - **pagination**:
+    - `limit` default 50, max 200
+    - `offset` default 0
+- **Response 200**:
+
+```json
+{
+  "items": [ /* wallet objects */ ],
+  "limit": 50,
+  "offset": 0,
+  "sort": "id",
+  "order": "desc"
+}
+```
+
+- **Errors** (non-exhaustive):
+  - 401 `{ "message": "missing or invalid admin user id" }`
+  - 403 `{ "message": "admin access required" }`
+  - 503 `{ "message": "auth service not configured" }`
+  - 502 `{ "message": "auth service error" }`
+  - 400 `{ "message": "invalid limit" }`
+  - 400 `{ "message": "invalid offset" }`
+  - 400 `{ "message": "invalid sort" }`
+  - 400 `{ "message": "invalid order" }`
+  - 400 `{ "message": "invalid user_id" }`
+  - 400 `{ "message": "invalid wallet_type" }`
+  - 400 `{ "message": "invalid freezed" }`
+  - 400 `{ "message": "invalid min_balance" }`
+  - 400 `{ "message": "invalid max_balance" }`
+
+---
+
 ## Delete wallet
 
 ### `DELETE /:wallet_id`

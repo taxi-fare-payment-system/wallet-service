@@ -49,7 +49,7 @@ func NewRouter(
 
 	// Top-up flow + finalize callback
 	r.PUT("/:wallet_id/topup", topupHandlers.TopupWallet)
-	r.POST("/wallet/finalize-topup", topupHandlers.FinalizeTopup)
+	r.POST("/v1/wallet/finalize-topup", topupHandlers.FinalizeTopup)
 
 	// Pay fare
 	r.PUT("/:wallet_id/pay-fare", payFareHandlers.PayFare)
@@ -61,6 +61,9 @@ func NewRouter(
 	r.PUT("/:wallet_id/withdraw", withdrawDeleteHandlers.Withdraw)
 	r.PUT("/:wallet_id/freeze", adminHandlers.FreezeWallet)
 	r.DELETE("/:wallet_id", withdrawDeleteHandlers.DeleteWallet)
+
+	// Admin: list wallets
+	r.GET("/admin/wallets", adminHandlers.FindWallets)
 
 	return r
 }
