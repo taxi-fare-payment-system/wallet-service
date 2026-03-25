@@ -15,6 +15,8 @@ type Config struct {
 	LogLevel              string
 	PaymentServiceBaseURL string
 	HTTPClientTimeout     time.Duration
+	TripServiceBaseURL    string
+	TripValidatePath      string
 
 	DBMaxOpenConns int
 	DBMaxIdleConns int
@@ -33,6 +35,8 @@ func Load() (Config, error) {
 		LogLevel:              getenvDefault("LOG_LEVEL", "info"),
 		PaymentServiceBaseURL: mustGetenv("PAYMENT_SERVICE_BASE_URL"),
 		HTTPClientTimeout:     getenvDurationDefault("HTTP_CLIENT_TIMEOUT", 10*time.Second),
+		TripServiceBaseURL:    getenvDefault("TRIP_SERVICE_BASE_URL", ""),
+		TripValidatePath:      getenvDefault("TRIP_VALIDATE_PATH", "/validate-trip-membership"),
 		DBMaxOpenConns:        getenvIntDefault("DB_MAX_OPEN_CONNS", 25),
 		DBMaxIdleConns:        getenvIntDefault("DB_MAX_IDLE_CONNS", 25),
 		DBConnMaxIdle:         getenvDurationDefault("DB_CONN_MAX_IDLE", 5*time.Minute),

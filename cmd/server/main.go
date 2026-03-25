@@ -18,6 +18,7 @@ import (
 	"wallet_service/internal/payment"
 	"wallet_service/internal/repository"
 	"wallet_service/internal/services"
+	"wallet_service/internal/trip"
 )
 
 func main() {
@@ -54,6 +55,22 @@ func main() {
 		WalletService: walletService,
 		PaymentClient: paymentClient,
 	}
+	var tripClient *trip.Client
+	if cfg.TripServiceBaseURL != "" {
+		tc, err := trip.NewClient(cfg.TripServiceBaseURL, cfg.TripValidatePath, httpClient)
+		if err != nil {
+			logger.Error("trip_client_init_failed", slog.Any("error", err))
+			os.Exit(1)
+		}
+		tripClient = tc
+	}
+
+	payFareHandlers := &handlers.PayFareHandlers{
+		WalletRepo:    walletRepo,
+		WalletService: walletService,
+		PaymentClient: paymentClient,
+		TripClient:    tripClient,
+	}
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -82,6 +99,9 @@ func main() {
 	// Milestone 5: topup flow + finalize callback
 	mux.HandleFunc("PUT /{wallet_id}/topup", topupHandlers.TopupWallet)
 	mux.HandleFunc("POST /v1/wallet/finalize-topup", topupHandlers.FinalizeTopup)
+
+	// Milestone 6: pay fare
+	mux.HandleFunc("PUT /{wallet_id}/pay-fare", payFareHandlers.PayFare)
 
 	handler := httpx.RequestIDMiddleware(httpx.AccessLogMiddleware(logger)(mux))
 

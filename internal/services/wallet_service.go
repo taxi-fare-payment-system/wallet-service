@@ -15,6 +15,8 @@ type WalletService struct {
 	WalletRepo *repository.WalletRepository
 }
 
+type TransferHook func(ctx context.Context) error
+
 // TransferBalance atomically transfers amount from fromWalletID to toWalletID.
 // It enforces:
 // - amount > 0
@@ -22,6 +24,16 @@ type WalletService struct {
 // - both wallets are not frozen
 // - from wallet remains non-negative
 func (s *WalletService) TransferBalance(ctx context.Context, fromWalletID, toWalletID int64, amount decimal.Decimal) error {
+	return s.transferBalance(ctx, fromWalletID, toWalletID, amount, nil)
+}
+
+// TransferBalanceWithHook performs the same atomic transfer as TransferBalance, but runs hook
+// after balances are updated and before the DB transaction commits.
+func (s *WalletService) TransferBalanceWithHook(ctx context.Context, fromWalletID, toWalletID int64, amount decimal.Decimal, hook TransferHook) error {
+	return s.transferBalance(ctx, fromWalletID, toWalletID, amount, hook)
+}
+
+func (s *WalletService) transferBalance(ctx context.Context, fromWalletID, toWalletID int64, amount decimal.Decimal, hook TransferHook) error {
 	if amount.Cmp(decimal.Zero) <= 0 {
 		return ErrInvalidAmount
 	}
@@ -71,6 +83,11 @@ func (s *WalletService) TransferBalance(ctx context.Context, fromWalletID, toWal
 		}
 		if err := tx.Save(&to).Error; err != nil {
 			return err
+		}
+		if hook != nil {
+			if err := hook(ctx); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
