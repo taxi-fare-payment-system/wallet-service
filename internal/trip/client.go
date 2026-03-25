@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"wallet_service/internal/httpx"
+	"wallet_service/internal/server_utils"
 )
 
 type Client struct {
@@ -58,7 +58,7 @@ func (c *Client) ValidateTripMembership(ctx context.Context, tripID string, pass
 	q.Set("driver_user_id", fmt.Sprintf("%d", driverUserID))
 	req.URL.RawQuery = q.Encode()
 
-	if rid := httpx.RequestIDFromContext(ctx); rid != "" {
+	if rid := server_utils.RequestIDFromContext(ctx); rid != "" {
 		req.Header.Set("X-Request-ID", rid)
 	}
 

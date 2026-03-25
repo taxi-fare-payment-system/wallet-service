@@ -1,13 +1,14 @@
 package handlers
 
 import (
-	"net/http"
 	"strconv"
 
 	"wallet_service/internal/auth"
-	"wallet_service/internal/httpx"
 	"wallet_service/internal/models"
 	"wallet_service/internal/repository"
+	"wallet_service/internal/server_utils"
+
+	"github.com/gin-gonic/gin"
 )
 
 type AdminHandlers struct {
@@ -15,42 +16,42 @@ type AdminHandlers struct {
 	AuthClient *auth.Client
 }
 
-func (h *AdminHandlers) FreezeWallet(w http.ResponseWriter, r *http.Request) {
-	walletIDStr := r.PathValue("wallet_id")
+func (h *AdminHandlers) FreezeWallet(c *gin.Context) {
+	walletIDStr := c.Param("wallet_id")
 	walletID, err := strconv.ParseInt(walletIDStr, 10, 64)
 	if err != nil || walletID <= 0 {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid wallet id")
+		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet id"})
 		return
 	}
-	adminUserIDStr := r.Header.Get("X-Admin-User-Id")
+	adminUserIDStr := c.GetHeader("X-Admin-User-Id")
 	adminUserID, err := strconv.ParseInt(adminUserIDStr, 10, 64)
 	if err != nil || adminUserID <= 0 {
-		httpx.WriteError(w, http.StatusUnauthorized, "missing or invalid admin user id")
+		c.JSON(401, server_utils.ErrorResponse{Message: "missing or invalid admin user id"})
 		return
 	}
 	if h.AuthClient == nil {
-		httpx.WriteError(w, http.StatusServiceUnavailable, "auth service not configured")
+		c.JSON(503, server_utils.ErrorResponse{Message: "auth service not configured"})
 		return
 	}
-	isAdmin, err := h.AuthClient.VerifyAdmin(r.Context(), adminUserID)
+	isAdmin, err := h.AuthClient.VerifyAdmin(c.Request.Context(), adminUserID)
 	if err != nil {
-		httpx.WriteError(w, http.StatusBadGateway, "auth service error")
+		c.JSON(502, server_utils.ErrorResponse{Message: "auth service error"})
 		return
 	}
 	if !isAdmin {
-		httpx.WriteError(w, http.StatusForbidden, "admin access required")
+		c.JSON(403, server_utils.ErrorResponse{Message: "admin access required"})
 		return
 	}
 
 	db := h.WalletRepo.DB()
-	res := db.WithContext(r.Context()).Model(&models.Wallet{}).Where("id = ?", walletID).Update("freezed", true)
+	res := db.WithContext(c.Request.Context()).Model(&models.Wallet{}).Where("id = ?", walletID).Update("freezed", true)
 	if res.Error != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "internal error")
+		c.JSON(500, server_utils.ErrorResponse{Message: "internal error"})
 		return
 	}
 	if res.RowsAffected == 0 {
-		httpx.WriteError(w, http.StatusNotFound, "wallet not found")
+		c.JSON(404, server_utils.ErrorResponse{Message: "wallet not found"})
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "wallet_id": walletID})
+	c.JSON(200, map[string]any{"success": true, "wallet_id": walletID})
 }

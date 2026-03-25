@@ -1,17 +1,16 @@
 package handlers
 
 import (
-	"encoding/json"
-	"net/http"
 	"strconv"
 	"strings"
 
-	"wallet_service/internal/httpx"
 	"wallet_service/internal/models"
 	"wallet_service/internal/payment"
 	"wallet_service/internal/repository"
+	"wallet_service/internal/server_utils"
 	"wallet_service/internal/services"
 
+	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 )
 
@@ -35,45 +34,43 @@ type topupResponse struct {
 	CheckoutURL   string `json:"checkout_url"`
 }
 
-func (h *TopupHandlers) TopupWallet(w http.ResponseWriter, r *http.Request) {
-	walletIDStr := r.PathValue("wallet_id")
+func (h *TopupHandlers) TopupWallet(c *gin.Context) {
+	walletIDStr := c.Param("wallet_id")
 	walletID, err := strconv.ParseInt(walletIDStr, 10, 64)
 	if err != nil || walletID <= 0 {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid wallet id")
+		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet id"})
 		return
 	}
 
 	var req topupRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, server_utils.ErrorResponse{Message: "invalid json body"})
 		return
 	}
 	if req.Amount <= 0 {
-		httpx.WriteError(w, http.StatusBadRequest, "amount must be > 0")
+		c.JSON(400, server_utils.ErrorResponse{Message: "amount must be > 0"})
 		return
 	}
 	if strings.TrimSpace(req.PhoneNumber) == "" || strings.TrimSpace(req.FirstName) == "" || strings.TrimSpace(req.LastName) == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "phone_number, first_name, and last_name are required")
+		c.JSON(400, server_utils.ErrorResponse{Message: "phone_number, first_name, and last_name are required"})
 		return
 	}
 
-	wallet, err := h.WalletRepo.GetByID(r.Context(), walletID)
+	wallet, err := h.WalletRepo.GetByID(c.Request.Context(), walletID)
 	if err != nil {
 		if repository.IsNotFound(err) {
-			httpx.WriteError(w, http.StatusNotFound, "wallet not found")
+			c.JSON(404, server_utils.ErrorResponse{Message: "wallet not found"})
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal error")
+		c.JSON(500, server_utils.ErrorResponse{Message: "internal error"})
 		return
 	}
 	if wallet.Freezed {
-		httpx.WriteError(w, http.StatusForbidden, "wallet is frozen")
+		c.JSON(403, server_utils.ErrorResponse{Message: "wallet is frozen"})
 		return
 	}
 	if wallet.WalletType != models.WalletTypePassenger {
-		httpx.WriteError(w, http.StatusForbidden, "topup is only allowed for passenger wallets")
+		c.JSON(403, server_utils.ErrorResponse{Message: "topup is only allowed for passenger wallets"})
 		return
 	}
 
@@ -91,13 +88,13 @@ func (h *TopupHandlers) TopupWallet(w http.ResponseWriter, r *http.Request) {
 		TripID:         "",
 	}
 
-	out, err := h.PaymentClient.InitiateTopup(r.Context(), pReq)
+	out, err := h.PaymentClient.InitiateTopup(c.Request.Context(), pReq)
 	if err != nil {
-		httpx.WriteError(w, http.StatusBadGateway, err.Error())
+		c.JSON(502, server_utils.ErrorResponse{Message: err.Error()})
 		return
 	}
 
-	httpx.WriteJSON(w, http.StatusOK, topupResponse{
+	c.JSON(200, topupResponse{
 		TransactionID: out.TransactionID,
 		CheckoutURL:   out.CheckoutURL,
 	})
@@ -117,29 +114,27 @@ type finalizeTopupResponse struct {
 	Received bool `json:"received"`
 }
 
-func (h *TopupHandlers) FinalizeTopup(w http.ResponseWriter, r *http.Request) {
+func (h *TopupHandlers) FinalizeTopup(c *gin.Context) {
 	var req finalizeTopupRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, finalizeTopupResponse{Received: false})
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, finalizeTopupResponse{Received: false})
 		return
 	}
 
 	if strings.TrimSpace(req.TransactionID) == "" || strings.TrimSpace(req.ReceiverWalletID) == "" || strings.TrimSpace(req.Amount) == "" {
-		httpx.WriteJSON(w, http.StatusBadRequest, finalizeTopupResponse{Received: false})
+		c.JSON(400, finalizeTopupResponse{Received: false})
 		return
 	}
 
 	walletID, err := strconv.ParseInt(req.ReceiverWalletID, 10, 64)
 	if err != nil || walletID <= 0 {
-		httpx.WriteJSON(w, http.StatusBadRequest, finalizeTopupResponse{Received: false})
+		c.JSON(400, finalizeTopupResponse{Received: false})
 		return
 	}
 
 	amt, err := decimal.NewFromString(req.Amount)
 	if err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, finalizeTopupResponse{Received: false})
+		c.JSON(400, finalizeTopupResponse{Received: false})
 		return
 	}
 
@@ -159,7 +154,7 @@ func (h *TopupHandlers) FinalizeTopup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.WalletService.ApplyTopupIdempotent(
-		r.Context(),
+		c.Request.Context(),
 		strings.TrimSpace(req.TransactionID),
 		walletID,
 		amt,
@@ -168,9 +163,9 @@ func (h *TopupHandlers) FinalizeTopup(w http.ResponseWriter, r *http.Request) {
 		chapaPtr,
 	); err != nil {
 		// Payment service expects 400/401/500 style responses; here we only distinguish invalid input vs server error.
-		httpx.WriteJSON(w, http.StatusInternalServerError, finalizeTopupResponse{Received: false})
+		c.JSON(500, finalizeTopupResponse{Received: false})
 		return
 	}
 
-	httpx.WriteJSON(w, http.StatusOK, finalizeTopupResponse{Received: true})
+	c.JSON(200, finalizeTopupResponse{Received: true})
 }

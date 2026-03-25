@@ -15,9 +15,9 @@ import (
 	"wallet_service/internal/config"
 	"wallet_service/internal/db"
 	"wallet_service/internal/handlers"
-	"wallet_service/internal/httpx"
 	"wallet_service/internal/payment"
 	"wallet_service/internal/repository"
+	"wallet_service/internal/server"
 	"wallet_service/internal/services"
 	"wallet_service/internal/trip"
 )
@@ -40,7 +40,6 @@ func main() {
 	}
 	defer database.SQL.Close()
 
-	mux := http.NewServeMux()
 	walletRepo := repository.NewWalletRepository(database.Gorm)
 	walletHandlers := &handlers.WalletHandlers{WalletRepo: walletRepo}
 	walletService := &services.WalletService{WalletRepo: walletRepo}
@@ -86,50 +85,20 @@ func main() {
 	adminHandlers := &handlers.AdminHandlers{WalletRepo: walletRepo, AuthClient: authClient}
 	withdrawDeleteHandlers := &handlers.WithdrawDeleteHandlers{WalletRepo: walletRepo}
 
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		if err := database.SQL.PingContext(ctx); err != nil {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"status":"not_ready"}`))
-			return
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-
-	// Wallet APIs (Milestone 2)
-	mux.HandleFunc("GET /{id}", walletHandlers.GetWallet)
-	mux.HandleFunc("GET /users/{userId}", walletHandlers.GetWalletByUser)
-	mux.HandleFunc("POST /", walletHandlers.CreateWallet)
-
-	// Milestone 5: topup flow + finalize callback
-	mux.HandleFunc("PUT /{wallet_id}/topup", topupHandlers.TopupWallet)
-	mux.HandleFunc("POST /v1/wallet/finalize-topup", topupHandlers.FinalizeTopup)
-
-	// Milestone 6: pay fare
-	mux.HandleFunc("PUT /{wallet_id}/pay-fare", payFareHandlers.PayFare)
-
-	// Milestone 7: transaction history proxy
-	mux.HandleFunc("GET /transactions", transactionsHandlers.ListTransactions)
-
-	// Milestone 8: withdraw, freeze, delete
-	mux.HandleFunc("PUT /{wallet_id}/withdraw", withdrawDeleteHandlers.Withdraw)
-	mux.HandleFunc("PUT /{wallet_id}/freeze", adminHandlers.FreezeWallet)
-	mux.HandleFunc("DELETE /{wallet_id}", withdrawDeleteHandlers.DeleteWallet)
-
-	handler := httpx.RecoveryMiddleware(logger)(httpx.RequestIDMiddleware(httpx.AccessLogMiddleware(logger)(mux)))
+	router := server.NewRouter(
+		logger,
+		database.SQL,
+		walletHandlers,
+		topupHandlers,
+		payFareHandlers,
+		transactionsHandlers,
+		adminHandlers,
+		withdrawDeleteHandlers,
+	)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           handler,
+		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

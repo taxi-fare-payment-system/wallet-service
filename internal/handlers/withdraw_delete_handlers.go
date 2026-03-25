@@ -1,15 +1,14 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
-	"net/http"
 	"strconv"
 
-	"wallet_service/internal/httpx"
 	"wallet_service/internal/models"
 	"wallet_service/internal/repository"
+	"wallet_service/internal/server_utils"
 
+	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -22,29 +21,27 @@ type withdrawRequest struct {
 	Amount float64 `json:"amount"`
 }
 
-func (h *WithdrawDeleteHandlers) Withdraw(w http.ResponseWriter, r *http.Request) {
-	walletIDStr := r.PathValue("wallet_id")
+func (h *WithdrawDeleteHandlers) Withdraw(c *gin.Context) {
+	walletIDStr := c.Param("wallet_id")
 	walletID, err := strconv.ParseInt(walletIDStr, 10, 64)
 	if err != nil || walletID <= 0 {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid wallet id")
+		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet id"})
 		return
 	}
 
 	var req withdrawRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, server_utils.ErrorResponse{Message: "invalid json body"})
 		return
 	}
 	if req.Amount <= 0 {
-		httpx.WriteError(w, http.StatusBadRequest, "amount must be > 0")
+		c.JSON(400, server_utils.ErrorResponse{Message: "amount must be > 0"})
 		return
 	}
 
 	db := h.WalletRepo.DB()
-	err = db.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
-		wlt, err := h.WalletRepo.LockByID(r.Context(), tx, walletID)
+	err = db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		wlt, err := h.WalletRepo.LockByID(c.Request.Context(), tx, walletID)
 		if err != nil {
 			return err
 		}
@@ -71,35 +68,35 @@ func (h *WithdrawDeleteHandlers) Withdraw(w http.ResponseWriter, r *http.Request
 	})
 	if err != nil {
 		if repository.IsNotFound(err) {
-			httpx.WriteError(w, http.StatusNotFound, "wallet not found")
+			c.JSON(404, server_utils.ErrorResponse{Message: "wallet not found"})
 			return
 		}
 		if err.Error() == "wallet is frozen" {
-			httpx.WriteError(w, http.StatusForbidden, "wallet is frozen")
+			c.JSON(403, server_utils.ErrorResponse{Message: "wallet is frozen"})
 			return
 		}
 		if err.Error() == "insufficient funds" {
-			httpx.WriteError(w, http.StatusBadRequest, "insufficient balance")
+			c.JSON(400, server_utils.ErrorResponse{Message: "insufficient balance"})
 			return
 		}
-		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		c.JSON(400, server_utils.ErrorResponse{Message: err.Error()})
 		return
 	}
 
-	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "accepted"})
+	c.JSON(202, map[string]any{"status": "accepted"})
 }
 
-func (h *WithdrawDeleteHandlers) DeleteWallet(w http.ResponseWriter, r *http.Request) {
-	walletIDStr := r.PathValue("wallet_id")
+func (h *WithdrawDeleteHandlers) DeleteWallet(c *gin.Context) {
+	walletIDStr := c.Param("wallet_id")
 	walletID, err := strconv.ParseInt(walletIDStr, 10, 64)
 	if err != nil || walletID <= 0 {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid wallet id")
+		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet id"})
 		return
 	}
 
 	db := h.WalletRepo.DB()
-	err = db.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
-		wlt, err := h.WalletRepo.LockByID(r.Context(), tx, walletID)
+	err = db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		wlt, err := h.WalletRepo.LockByID(c.Request.Context(), tx, walletID)
 		if err != nil {
 			return err
 		}
@@ -110,12 +107,12 @@ func (h *WithdrawDeleteHandlers) DeleteWallet(w http.ResponseWriter, r *http.Req
 	})
 	if err != nil {
 		if repository.IsNotFound(err) {
-			httpx.WriteError(w, http.StatusNotFound, "wallet not found")
+			c.JSON(404, server_utils.ErrorResponse{Message: "wallet not found"})
 			return
 		}
-		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		c.JSON(400, server_utils.ErrorResponse{Message: err.Error()})
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	c.Status(204)
 }

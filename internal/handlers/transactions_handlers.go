@@ -1,12 +1,13 @@
 package handlers
 
 import (
-	"net/http"
 	"net/url"
 	"strconv"
 
-	"wallet_service/internal/httpx"
 	"wallet_service/internal/payment"
+	"wallet_service/internal/server_utils"
+
+	"github.com/gin-gonic/gin"
 )
 
 type TransactionsHandlers struct {
@@ -29,16 +30,16 @@ var forbiddenTransactionQueryParams = map[string]bool{
 	"trip_id":       true,
 }
 
-func (h *TransactionsHandlers) ListTransactions(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
+func (h *TransactionsHandlers) ListTransactions(c *gin.Context) {
+	q := c.Request.URL.Query()
 
 	for key := range q {
 		if forbiddenTransactionQueryParams[key] {
-			httpx.WriteError(w, http.StatusBadRequest, "query param not supported: "+key)
+			c.JSON(400, server_utils.ErrorResponse{Message: "query param not supported: " + key})
 			return
 		}
 		if !allowedTransactionQueryParams[key] {
-			httpx.WriteError(w, http.StatusBadRequest, "unknown query param: "+key)
+			c.JSON(400, server_utils.ErrorResponse{Message: "unknown query param: " + key})
 			return
 		}
 	}
@@ -47,22 +48,22 @@ func (h *TransactionsHandlers) ListTransactions(w http.ResponseWriter, r *http.R
 	if lim := q.Get("limit"); lim != "" {
 		n, err := strconv.Atoi(lim)
 		if err != nil || n < 0 || n > 200 {
-			httpx.WriteError(w, http.StatusBadRequest, "invalid limit")
+			c.JSON(400, server_utils.ErrorResponse{Message: "invalid limit"})
 			return
 		}
 	}
 	if off := q.Get("offset"); off != "" {
 		n, err := strconv.Atoi(off)
 		if err != nil || n < 0 {
-			httpx.WriteError(w, http.StatusBadRequest, "invalid offset")
+			c.JSON(400, server_utils.ErrorResponse{Message: "invalid offset"})
 			return
 		}
 	}
 
-	out, err := h.PaymentClient.ListTransactions(r.Context(), url.Values(q))
+	out, err := h.PaymentClient.ListTransactions(c.Request.Context(), url.Values(q))
 	if err != nil {
-		httpx.WriteError(w, http.StatusBadGateway, err.Error())
+		c.JSON(502, server_utils.ErrorResponse{Message: err.Error()})
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, out)
+	c.JSON(200, out)
 }

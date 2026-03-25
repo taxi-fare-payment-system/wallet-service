@@ -1,17 +1,16 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"wallet_service/internal/httpx"
 	"wallet_service/internal/models"
 	"wallet_service/internal/repository"
+	"wallet_service/internal/server_utils"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 )
@@ -47,67 +46,65 @@ func toWalletResponse(w models.Wallet) walletResponse {
 	}
 }
 
-func (h *WalletHandlers) GetWallet(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
+func (h *WalletHandlers) GetWallet(c *gin.Context) {
+	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil || id <= 0 {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid wallet id")
+		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet id"})
 		return
 	}
 
-	wallet, err := h.WalletRepo.GetByID(r.Context(), id)
+	wallet, err := h.WalletRepo.GetByID(c.Request.Context(), id)
 	if err != nil {
 		if repository.IsNotFound(err) {
-			httpx.WriteError(w, http.StatusNotFound, "wallet not found")
+			c.JSON(404, server_utils.ErrorResponse{Message: "wallet not found"})
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal error")
+		c.JSON(500, server_utils.ErrorResponse{Message: "internal error"})
 		return
 	}
 
-	httpx.WriteJSON(w, http.StatusOK, toWalletResponse(wallet))
+	c.JSON(200, toWalletResponse(wallet))
 }
 
-func (h *WalletHandlers) GetWalletByUser(w http.ResponseWriter, r *http.Request) {
-	userIDStr := r.PathValue("userId")
+func (h *WalletHandlers) GetWalletByUser(c *gin.Context) {
+	userIDStr := c.Param("userId")
 	userID, err := strconv.ParseInt(userIDStr, 10, 64)
 	if err != nil || userID <= 0 {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid user id")
+		c.JSON(400, server_utils.ErrorResponse{Message: "invalid user id"})
 		return
 	}
 
-	walletTypeRaw := strings.TrimSpace(r.URL.Query().Get("type"))
+	walletTypeRaw := strings.TrimSpace(c.Query("type"))
 	if walletTypeRaw == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "missing wallet type")
+		c.JSON(400, server_utils.ErrorResponse{Message: "missing wallet type"})
 		return
 	}
 	walletType := models.WalletType(walletTypeRaw)
 	switch walletType {
 	case models.WalletTypePassenger, models.WalletTypeDriver, models.WalletTypeOwner:
 	default:
-		httpx.WriteError(w, http.StatusBadRequest, "invalid wallet type")
+		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet type"})
 		return
 	}
 
-	wallet, err := h.WalletRepo.GetByUserIDAndType(r.Context(), userID, walletType)
+	wallet, err := h.WalletRepo.GetByUserIDAndType(c.Request.Context(), userID, walletType)
 	if err != nil {
 		if repository.IsNotFound(err) {
-			httpx.WriteError(w, http.StatusNotFound, "wallet not found")
+			c.JSON(404, server_utils.ErrorResponse{Message: "wallet not found"})
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal error")
+		c.JSON(500, server_utils.ErrorResponse{Message: "internal error"})
 		return
 	}
 
-	httpx.WriteJSON(w, http.StatusOK, toWalletResponse(wallet))
+	c.JSON(200, toWalletResponse(wallet))
 }
 
-func (h *WalletHandlers) CreateWallet(w http.ResponseWriter, r *http.Request) {
+func (h *WalletHandlers) CreateWallet(c *gin.Context) {
 	var req createWalletRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid json body")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, server_utils.ErrorResponse{Message: "invalid json body"})
 		return
 	}
 
@@ -115,11 +112,11 @@ func (h *WalletHandlers) CreateWallet(w http.ResponseWriter, r *http.Request) {
 	switch walletType {
 	case models.WalletTypePassenger, models.WalletTypeDriver, models.WalletTypeOwner:
 	default:
-		httpx.WriteError(w, http.StatusBadRequest, "invalid wallet type")
+		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet type"})
 		return
 	}
 	if req.UserID <= 0 {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid user id")
+		c.JSON(400, server_utils.ErrorResponse{Message: "invalid user id"})
 		return
 	}
 
@@ -129,15 +126,15 @@ func (h *WalletHandlers) CreateWallet(w http.ResponseWriter, r *http.Request) {
 		Freezed:    false,
 		Balance:    decimal.Zero,
 	}
-	if err := h.WalletRepo.Create(r.Context(), &newWallet); err != nil {
+	if err := h.WalletRepo.Create(c.Request.Context(), &newWallet); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			httpx.WriteError(w, http.StatusConflict, "wallet already exists for user and type")
+			c.JSON(409, server_utils.ErrorResponse{Message: "wallet already exists for user and type"})
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal error")
+		c.JSON(500, server_utils.ErrorResponse{Message: "internal error"})
 		return
 	}
 
-	httpx.WriteJSON(w, http.StatusCreated, toWalletResponse(newWallet))
+	c.JSON(201, toWalletResponse(newWallet))
 }

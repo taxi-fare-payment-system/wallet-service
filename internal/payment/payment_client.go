@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"wallet_service/internal/httpx"
+	"wallet_service/internal/server_utils"
 )
 
 func (c *Client) Initiate(ctx context.Context, req InitiateRequest) (any, error) {
@@ -52,7 +52,7 @@ func (c *Client) GetReceipt(ctx context.Context, transactionID string) (*http.Re
 	if err != nil {
 		return nil, nil, err
 	}
-	if rid := httpx.RequestIDFromContext(ctx); rid != "" {
+	if rid := server_utils.RequestIDFromContext(ctx); rid != "" {
 		req.Header.Set("X-Request-ID", rid)
 	}
 
@@ -63,7 +63,7 @@ func (c *Client) GetReceipt(ctx context.Context, transactionID string) (*http.Re
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		var er httpx.ErrorResponse
+		var er server_utils.ErrorResponse
 		_ = json.Unmarshal(b, &er)
 		return resp, b, &APIError{StatusCode: resp.StatusCode, Message: er.Message}
 	}

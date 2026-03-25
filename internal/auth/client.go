@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"wallet_service/internal/httpx"
+	"wallet_service/internal/server_utils"
 )
 
 type Client struct {
@@ -52,7 +52,7 @@ func (c *Client) VerifyAdmin(ctx context.Context, userID int64) (bool, error) {
 	q.Set("user_id", fmt.Sprintf("%d", userID))
 	req.URL.RawQuery = q.Encode()
 
-	if rid := httpx.RequestIDFromContext(ctx); rid != "" {
+	if rid := server_utils.RequestIDFromContext(ctx); rid != "" {
 		req.Header.Set("X-Request-ID", rid)
 	}
 

@@ -12,7 +12,7 @@ import (
 	"path"
 	"strings"
 
-	"wallet_service/internal/httpx"
+	"wallet_service/internal/server_utils"
 )
 
 type Client struct {
@@ -66,7 +66,7 @@ func (c *Client) doJSON(ctx context.Context, method, p string, in any, out any) 
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
-	if rid := httpx.RequestIDFromContext(ctx); rid != "" {
+	if rid := server_utils.RequestIDFromContext(ctx); rid != "" {
 		req.Header.Set("X-Request-ID", rid)
 	}
 
@@ -77,7 +77,7 @@ func (c *Client) doJSON(ctx context.Context, method, p string, in any, out any) 
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
-		var er httpx.ErrorResponse
+		var er server_utils.ErrorResponse
 		_ = json.NewDecoder(resp.Body).Decode(&er)
 		return resp, &APIError{StatusCode: resp.StatusCode, Message: er.Message}
 	}
