@@ -71,6 +71,7 @@ func main() {
 		PaymentClient: paymentClient,
 		TripClient:    tripClient,
 	}
+	transactionsHandlers := &handlers.TransactionsHandlers{PaymentClient: paymentClient}
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -102,6 +103,9 @@ func main() {
 
 	// Milestone 6: pay fare
 	mux.HandleFunc("PUT /{wallet_id}/pay-fare", payFareHandlers.PayFare)
+
+	// Milestone 7: transaction history proxy
+	mux.HandleFunc("GET /transactions", transactionsHandlers.ListTransactions)
 
 	handler := httpx.RequestIDMiddleware(httpx.AccessLogMiddleware(logger)(mux))
 
