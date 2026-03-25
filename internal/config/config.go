@@ -17,6 +17,8 @@ type Config struct {
 	HTTPClientTimeout     time.Duration
 	TripServiceBaseURL    string
 	TripValidatePath      string
+	AuthServiceBaseURL    string
+	AuthVerifyAdminPath   string
 
 	DBMaxOpenConns int
 	DBMaxIdleConns int
@@ -37,6 +39,8 @@ func Load() (Config, error) {
 		HTTPClientTimeout:     getenvDurationDefault("HTTP_CLIENT_TIMEOUT", 10*time.Second),
 		TripServiceBaseURL:    getenvDefault("TRIP_SERVICE_BASE_URL", ""),
 		TripValidatePath:      getenvDefault("TRIP_VALIDATE_PATH", "/validate-trip-membership"),
+		AuthServiceBaseURL:    getenvDefault("AUTH_SERVICE_BASE_URL", ""),
+		AuthVerifyAdminPath:   getenvDefault("AUTH_VERIFY_ADMIN_PATH", "/verify-admin"),
 		DBMaxOpenConns:        getenvIntDefault("DB_MAX_OPEN_CONNS", 25),
 		DBMaxIdleConns:        getenvIntDefault("DB_MAX_IDLE_CONNS", 25),
 		DBConnMaxIdle:         getenvDurationDefault("DB_CONN_MAX_IDLE", 5*time.Minute),

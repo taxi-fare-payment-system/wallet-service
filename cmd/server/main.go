@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"wallet_service/internal/auth"
 	"wallet_service/internal/config"
 	"wallet_service/internal/db"
 	"wallet_service/internal/handlers"
@@ -73,6 +74,18 @@ func main() {
 	}
 	transactionsHandlers := &handlers.TransactionsHandlers{PaymentClient: paymentClient}
 
+	var authClient *auth.Client
+	if cfg.AuthServiceBaseURL != "" {
+		ac, err := auth.NewClient(cfg.AuthServiceBaseURL, cfg.AuthVerifyAdminPath, httpClient)
+		if err != nil {
+			logger.Error("auth_client_init_failed", slog.Any("error", err))
+			os.Exit(1)
+		}
+		authClient = ac
+	}
+	adminHandlers := &handlers.AdminHandlers{WalletRepo: walletRepo, AuthClient: authClient}
+	withdrawDeleteHandlers := &handlers.WithdrawDeleteHandlers{WalletRepo: walletRepo}
+
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -106,6 +119,11 @@ func main() {
 
 	// Milestone 7: transaction history proxy
 	mux.HandleFunc("GET /transactions", transactionsHandlers.ListTransactions)
+
+	// Milestone 8: withdraw, freeze, delete
+	mux.HandleFunc("PUT /{wallet_id}/withdraw", withdrawDeleteHandlers.Withdraw)
+	mux.HandleFunc("PUT /{wallet_id}/freeze", adminHandlers.FreezeWallet)
+	mux.HandleFunc("DELETE /{wallet_id}", withdrawDeleteHandlers.DeleteWallet)
 
 	handler := httpx.RequestIDMiddleware(httpx.AccessLogMiddleware(logger)(mux))
 
