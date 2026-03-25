@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root_postgres
+      POSTGRES_DB: fare_wallet_service
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fare_wallet_service"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  wallet:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:root_postgres@postgres:5432/fare_wallet_service?sslmode=disable
+      PORT: "8081"
+      LOG_LEVEL: info
+      MIGRATIONS_PATH: file://migrations
+      PAYMENT_SERVICE_BASE_URL: http://payment:8080
+      HTTP_CLIENT_TIMEOUT: 10s
+      TRIP_SERVICE_BASE_URL: ""
+      AUTH_SERVICE_BASE_URL: ""
+    ports:
+      - "8081:8081"
+    command: ["/bin/sh", "-lc", "/app/wallet-migrate up && /app/wallet-server"]
+
+  # Optional: run payment service separately and point PAYMENT_SERVICE_BASE_URL to it.
+  payment:
+    image: alpine:3.20
+    command: ["/bin/sh", "-lc", "echo 'payment service not included in this repo'; sleep 3600"]
+    ports:
+      - "8080:8080"
+

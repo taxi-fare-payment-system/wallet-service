@@ -125,7 +125,7 @@ func main() {
 	mux.HandleFunc("PUT /{wallet_id}/freeze", adminHandlers.FreezeWallet)
 	mux.HandleFunc("DELETE /{wallet_id}", withdrawDeleteHandlers.DeleteWallet)
 
-	handler := httpx.RequestIDMiddleware(httpx.AccessLogMiddleware(logger)(mux))
+	handler := httpx.RecoveryMiddleware(logger)(httpx.RequestIDMiddleware(httpx.AccessLogMiddleware(logger)(mux)))
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
