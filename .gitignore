@@ -3,3 +3,5 @@ wallet_service_spec.md
 .env
 payment_service_spec.md
 wallet_payment.md
+migrate.exe
+server.exe
