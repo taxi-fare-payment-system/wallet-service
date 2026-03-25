@@ -15,7 +15,9 @@ import (
 	"wallet_service/internal/db"
 	"wallet_service/internal/handlers"
 	"wallet_service/internal/httpx"
+	"wallet_service/internal/payment"
 	"wallet_service/internal/repository"
+	"wallet_service/internal/services"
 )
 
 func main() {
@@ -39,6 +41,19 @@ func main() {
 	mux := http.NewServeMux()
 	walletRepo := repository.NewWalletRepository(database.Gorm)
 	walletHandlers := &handlers.WalletHandlers{WalletRepo: walletRepo}
+	walletService := &services.WalletService{WalletRepo: walletRepo}
+
+	httpClient := &http.Client{Timeout: cfg.HTTPClientTimeout}
+	paymentClient, err := payment.NewClient(cfg.PaymentServiceBaseURL, httpClient)
+	if err != nil {
+		logger.Error("payment_client_init_failed", slog.Any("error", err))
+		os.Exit(1)
+	}
+	topupHandlers := &handlers.TopupHandlers{
+		WalletRepo:    walletRepo,
+		WalletService: walletService,
+		PaymentClient: paymentClient,
+	}
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -63,6 +78,10 @@ func main() {
 	mux.HandleFunc("GET /{id}", walletHandlers.GetWallet)
 	mux.HandleFunc("GET /users/{userId}", walletHandlers.GetWalletByUser)
 	mux.HandleFunc("POST /", walletHandlers.CreateWallet)
+
+	// Milestone 5: topup flow + finalize callback
+	mux.HandleFunc("PUT /{wallet_id}/topup", topupHandlers.TopupWallet)
+	mux.HandleFunc("POST /v1/wallet/finalize-topup", topupHandlers.FinalizeTopup)
 
 	handler := httpx.RequestIDMiddleware(httpx.AccessLogMiddleware(logger)(mux))
 
