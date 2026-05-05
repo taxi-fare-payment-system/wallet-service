@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"wallet_service/internal/payment"
+	"wallet_service/internal/repository"
 	"wallet_service/internal/server_utils"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +13,7 @@ import (
 
 type TransactionsHandlers struct {
 	PaymentClient *payment.Client
+	WalletRepo    *repository.WalletRepository
 }
 
 var allowedTransactionQueryParams = map[string]bool{
@@ -31,6 +33,12 @@ var forbiddenTransactionQueryParams = map[string]bool{
 }
 
 func (h *TransactionsHandlers) ListTransactions(c *gin.Context) {
+	callerID, ok := server_utils.ParseXUserID(c)
+	if !ok {
+		c.JSON(401, server_utils.ErrorResponse{Message: "missing X-User-ID"})
+		return
+	}
+
 	q := c.Request.URL.Query()
 
 	for key := range q {
@@ -44,7 +52,18 @@ func (h *TransactionsHandlers) ListTransactions(c *gin.Context) {
 		}
 	}
 
-	// Optional local validation (payment service also validates)
+	sender := q.Get("sender_wallet_id")
+	receiver := q.Get("receiver_wallet_id")
+	if sender == "" && receiver == "" {
+		c.JSON(400, server_utils.ErrorResponse{Message: "sender_wallet_id or receiver_wallet_id required"})
+		return
+	}
+
+	if !h.walletOwnedByUser(c, callerID, sender) || !h.walletOwnedByUser(c, callerID, receiver) {
+		c.JSON(403, server_utils.ErrorResponse{Message: "forbidden"})
+		return
+	}
+
 	if lim := q.Get("limit"); lim != "" {
 		n, err := strconv.Atoi(lim)
 		if err != nil || n < 0 || n > 200 {
@@ -66,4 +85,19 @@ func (h *TransactionsHandlers) ListTransactions(c *gin.Context) {
 		return
 	}
 	c.JSON(200, out)
+}
+
+func (h *TransactionsHandlers) walletOwnedByUser(c *gin.Context, callerUserID int64, walletIDStr string) bool {
+	if walletIDStr == "" {
+		return true
+	}
+	walletID, err := strconv.ParseInt(walletIDStr, 10, 64)
+	if err != nil || walletID <= 0 {
+		return false
+	}
+	w, err := h.WalletRepo.GetByID(c.Request.Context(), walletID)
+	if err != nil {
+		return false
+	}
+	return w.UserID == callerUserID
 }

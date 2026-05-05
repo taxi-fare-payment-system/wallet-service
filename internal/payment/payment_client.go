@@ -45,6 +45,18 @@ func (c *Client) ListTransactions(ctx context.Context, query url.Values) (Transa
 	return out, err
 }
 
+func (c *Client) GetChapaBanks(ctx context.Context) (ChapaBanksResponse, error) {
+	var out ChapaBanksResponse
+	_, err := c.doJSON(ctx, http.MethodGet, "/banks/chapa", nil, &out)
+	return out, err
+}
+
+func (c *Client) InitiateWithdrawal(ctx context.Context, req WithdrawalRequest) (WithdrawalResponse, error) {
+	var out WithdrawalResponse
+	_, err := c.doJSON(ctx, http.MethodPost, "/withdrawals", req, &out)
+	return out, err
+}
+
 // GetReceipt fetches `GET /receipts/:id`.
 // Note: payment service may respond with 302 redirects or 200 HTML; callers can inspect status/body/headers.
 func (c *Client) GetReceipt(ctx context.Context, transactionID string) (*http.Response, []byte, error) {

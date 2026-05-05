@@ -1,0 +1,2 @@
+ALTER TABLE wallets
+    ADD COLUMN IF NOT EXISTS sub_city_id TEXT NULL;

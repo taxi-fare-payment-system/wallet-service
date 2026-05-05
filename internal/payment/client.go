@@ -69,6 +69,9 @@ func (c *Client) doJSON(ctx context.Context, method, p string, in any, out any) 
 	if rid := server_utils.RequestIDFromContext(ctx); rid != "" {
 		req.Header.Set("X-Request-ID", rid)
 	}
+	if auth := server_utils.AuthBearerFromContext(ctx); auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

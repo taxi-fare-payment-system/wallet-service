@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"wallet_service/internal/messaging"
 	"wallet_service/internal/models"
 	"wallet_service/internal/repository"
 	"wallet_service/internal/server_utils"
@@ -17,6 +18,7 @@ import (
 
 type WalletHandlers struct {
 	WalletRepo *repository.WalletRepository
+	Bus        *messaging.Publisher
 }
 
 type createWalletRequest struct {
@@ -32,6 +34,10 @@ type walletResponse struct {
 	Balance    decimal.Decimal   `json:"balance"`
 	CreatedAt  string            `json:"created_at"`
 	UpdatedAt  string            `json:"updated_at"`
+}
+
+type walletIDOnlyResponse struct {
+	WalletID int64 `json:"wallet_id"`
 }
 
 func toWalletResponse(w models.Wallet) walletResponse {
@@ -98,7 +104,22 @@ func (h *WalletHandlers) GetWalletByUser(c *gin.Context) {
 		return
 	}
 
-	c.JSON(200, toWalletResponse(wallet))
+	callerID, hasCaller := server_utils.ParseXUserID(c)
+	role := strings.ToLower(server_utils.XUserRole(c))
+	if hasCaller && callerID == userID {
+		c.JSON(200, toWalletResponse(wallet))
+		return
+	}
+	if server_utils.IsPlatformAdminRole(role) {
+		c.JSON(200, toWalletResponse(wallet))
+		return
+	}
+	if role == "passenger" && walletType == models.WalletTypeDriver {
+		c.JSON(200, walletIDOnlyResponse{WalletID: wallet.ID})
+		return
+	}
+
+	c.JSON(403, server_utils.ErrorResponse{Message: "forbidden"})
 }
 
 func (h *WalletHandlers) CreateWallet(c *gin.Context) {
@@ -135,6 +156,13 @@ func (h *WalletHandlers) CreateWallet(c *gin.Context) {
 		c.JSON(500, server_utils.ErrorResponse{Message: "internal error"})
 		return
 	}
+
+	_ = h.Bus.PublishAnalytics(c.Request.Context(), "analytics.wallet.created", map[string]any{
+		"wallet_id":   newWallet.ID,
+		"user_id":     newWallet.UserID,
+		"wallet_type": string(newWallet.WalletType),
+		"balance":     0,
+	})
 
 	c.JSON(201, toWalletResponse(newWallet))
 }

@@ -16,9 +16,9 @@ type Config struct {
 	PaymentServiceBaseURL string
 	HTTPClientTimeout     time.Duration
 	TripServiceBaseURL    string
-	TripValidatePath      string
-	AuthServiceBaseURL    string
-	AuthVerifyAdminPath   string
+	RabbitMQURL           string
+	AnalyticsExchange     string
+	NotificationExchange  string
 
 	DBMaxOpenConns int
 	DBMaxIdleConns int
@@ -33,14 +33,14 @@ func Load() (Config, error) {
 		DatabaseURL:           mustGetenv("DATABASE_URL"),
 		Env:                   getenvDefault("ENV", "local"),
 		MigrationsPath:        getenvDefault("MIGRATIONS_PATH", "file://migrations"),
-		Port:                  getenvDefault("PORT", "8081"),
+		Port:                  getenvDefault("PORT", "8088"),
 		LogLevel:              getenvDefault("LOG_LEVEL", "info"),
 		PaymentServiceBaseURL: mustGetenv("PAYMENT_SERVICE_BASE_URL"),
 		HTTPClientTimeout:     getenvDurationDefault("HTTP_CLIENT_TIMEOUT", 10*time.Second),
 		TripServiceBaseURL:    getenvDefault("TRIP_SERVICE_BASE_URL", ""),
-		TripValidatePath:      getenvDefault("TRIP_VALIDATE_PATH", "/validate-trip-membership"),
-		AuthServiceBaseURL:    getenvDefault("AUTH_SERVICE_BASE_URL", ""),
-		AuthVerifyAdminPath:   getenvDefault("AUTH_VERIFY_ADMIN_PATH", "/verify-admin"),
+		RabbitMQURL:           getenvDefault("RABBITMQ_URL", ""),
+		AnalyticsExchange:     getenvDefault("ANALYTICS_EXCHANGE", "analytics_exchange"),
+		NotificationExchange:  getenvDefault("NOTIFICATION_EXCHANGE", "notification.exchange"),
 		DBMaxOpenConns:        getenvIntDefault("DB_MAX_OPEN_CONNS", 25),
 		DBMaxIdleConns:        getenvIntDefault("DB_MAX_IDLE_CONNS", 25),
 		DBConnMaxIdle:         getenvDurationDefault("DB_CONN_MAX_IDLE", 5*time.Minute),

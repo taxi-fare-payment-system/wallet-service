@@ -23,6 +23,7 @@ func NewRouter(
 	transactionsHandlers *handlers.TransactionsHandlers,
 	adminHandlers *handlers.AdminHandlers,
 	withdrawDeleteHandlers *handlers.WithdrawDeleteHandlers,
+	assistantHandlers *handlers.AssistantHandlers,
 ) *gin.Engine {
 	r := gin.New()
 	r.Use(GinRecoveryMiddleware(logger))
@@ -42,27 +43,23 @@ func NewRouter(
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	// Wallet APIs
-	r.GET("/:id", walletHandlers.GetWallet)
-	r.GET("/users/:userId", walletHandlers.GetWalletByUser)
-	r.POST("/", walletHandlers.CreateWallet)
+	r.GET("/banks/chapa", withdrawDeleteHandlers.ListChapaBanks)
+	r.GET("/assistant/:assistantId/earnings", assistantHandlers.ListEarnings)
+	r.GET("/transactions", transactionsHandlers.ListTransactions)
 
-	// Top-up flow + finalize callback
+	r.POST("/", walletHandlers.CreateWallet)
+	r.GET("/users/:userId", walletHandlers.GetWalletByUser)
+	r.GET("/:id", walletHandlers.GetWallet)
+
 	r.PUT("/:wallet_id/topup", topupHandlers.TopupWallet)
 	r.POST("/v1/wallet/finalize-topup", topupHandlers.FinalizeTopup)
 
-	// Pay fare
 	r.PUT("/:wallet_id/pay-fare", payFareHandlers.PayFare)
 
-	// Transaction history proxy
-	r.GET("/transactions", transactionsHandlers.ListTransactions)
-
-	// Withdraw, freeze, delete
 	r.PUT("/:wallet_id/withdraw", withdrawDeleteHandlers.Withdraw)
 	r.PUT("/:wallet_id/freeze", adminHandlers.FreezeWallet)
 	r.DELETE("/:wallet_id", withdrawDeleteHandlers.DeleteWallet)
 
-	// Admin: list wallets
 	r.GET("/admin/wallets", adminHandlers.FindWallets)
 
 	return r

@@ -94,7 +94,7 @@ func (s *WalletService) transferBalance(ctx context.Context, fromWalletID, toWal
 }
 
 // ApplyTopupIdempotent credits a wallet exactly once for a given payment service transaction id.
-// If the transaction was already applied, it returns nil without changing the wallet balance.
+// If the transaction was already applied, applied is false and newBalance is the current balance.
 func (s *WalletService) ApplyTopupIdempotent(
 	ctx context.Context,
 	paymentTransactionID string,
@@ -103,13 +103,15 @@ func (s *WalletService) ApplyTopupIdempotent(
 	currency string,
 	txRef *string,
 	chapaReference *string,
-) error {
+) (applied bool, newBalance decimal.Decimal, err error) {
 	if amount.Cmp(decimal.Zero) <= 0 {
-		return ErrInvalidAmount
+		return false, decimal.Zero, ErrInvalidAmount
 	}
 
 	db := s.WalletRepo.DB()
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var outApplied bool
+	var outBal decimal.Decimal
+	txErr := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		w, err := s.WalletRepo.LockByID(ctx, tx, walletID)
 		if err != nil {
 			return err
@@ -131,11 +133,19 @@ func (s *WalletService) ApplyTopupIdempotent(
 			return err
 		}
 		if !created {
+			outApplied = false
+			outBal = w.Balance
 			return nil
 		}
 
 		w.Balance = w.Balance.Add(amount)
 		w.UpdatedAt = time.Now().UTC()
-		return tx.Save(&w).Error
+		if err := tx.Save(&w).Error; err != nil {
+			return err
+		}
+		outApplied = true
+		outBal = w.Balance
+		return nil
 	})
+	return outApplied, outBal, txErr
 }

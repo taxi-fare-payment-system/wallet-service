@@ -36,6 +36,8 @@ type TransferRequest struct {
 	ReceiverID       string  `json:"receiver_id"`
 	ReceiverFullName string  `json:"receiver_full_name"`
 	TripID           string  `json:"trip_id"`
+	SubCityID        string  `json:"sub_city_id,omitempty"`
+	AssistantID      string  `json:"assistant_id,omitempty"`
 	Message          string  `json:"message,omitempty"`
 }
 
@@ -51,4 +53,33 @@ type TransactionsListResponse struct {
 	Offset int              `json:"offset"`
 	Sort   string           `json:"sort"`
 	Order  string           `json:"order"`
+}
+
+type ChapaBankItem struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Slug     string `json:"slug"`
+	Code     string `json:"code"`
+	Currency string `json:"currency"`
+}
+
+type ChapaBanksResponse struct {
+	Items []ChapaBankItem `json:"items"`
+}
+
+type WithdrawalRequest struct {
+	Amount              float64 `json:"amount"`
+	PayerUserID         int64   `json:"payer_user_id"`
+	AccountName         string  `json:"account_name"`
+	AccountNumber       string  `json:"account_number"`
+	BankCode            string  `json:"bank_code"`
+	WithdrawalReference string  `json:"withdrawal_reference,omitempty"`
+	Message             string  `json:"message,omitempty"`
+}
+
+type WithdrawalResponse struct {
+	TransactionID       string  `json:"transaction_id"`
+	TxRef               string  `json:"tx_ref"`
+	WithdrawalReference *string `json:"withdrawal_reference,omitempty"`
+	Status              string  `json:"status"`
 }

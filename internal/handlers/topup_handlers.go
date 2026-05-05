@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"wallet_service/internal/messaging"
 	"wallet_service/internal/models"
 	"wallet_service/internal/payment"
 	"wallet_service/internal/repository"
@@ -11,6 +12,7 @@ import (
 	"wallet_service/internal/services"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
@@ -18,6 +20,7 @@ type TopupHandlers struct {
 	WalletRepo    *repository.WalletRepository
 	WalletService *services.WalletService
 	PaymentClient *payment.Client
+	Bus           *messaging.Publisher
 }
 
 type topupRequest struct {
@@ -153,7 +156,7 @@ func (h *TopupHandlers) FinalizeTopup(c *gin.Context) {
 		chapaPtr = &chapaRef
 	}
 
-	if err := h.WalletService.ApplyTopupIdempotent(
+	applied, newBal, err := h.WalletService.ApplyTopupIdempotent(
 		c.Request.Context(),
 		strings.TrimSpace(req.TransactionID),
 		walletID,
@@ -161,10 +164,41 @@ func (h *TopupHandlers) FinalizeTopup(c *gin.Context) {
 		currency,
 		txRefPtr,
 		chapaPtr,
-	); err != nil {
-		// Payment service expects 400/401/500 style responses; here we only distinguish invalid input vs server error.
+	)
+	if err != nil {
 		c.JSON(500, finalizeTopupResponse{Received: false})
 		return
+	}
+
+	if applied {
+		txID := strings.TrimSpace(req.TransactionID)
+		_ = h.Bus.PublishAnalytics(c.Request.Context(), "analytics.wallet.balance_updated", map[string]any{
+			"wallet_id": walletID,
+			"balance":   newBal.StringFixed(2),
+			"delta":     amt.StringFixed(2),
+			"reason":    "topup",
+		})
+		payer := strings.TrimSpace(req.PayerUserID)
+		if payer == "" {
+			payer = strconv.FormatInt(0, 10)
+		}
+		amtStr := amt.StringFixed(2)
+		_ = h.Bus.PublishNotification(c.Request.Context(), "notification.wallet.topup_succeeded", map[string]any{
+			"event_id":  uuid.NewString(),
+			"user_id":   payer,
+			"user_role": "passenger",
+			"type":      "topup_success",
+			"title":     "Wallet Topped Up",
+			"content":   "Your wallet has been credited " + amtStr + " ETB.",
+			"priority":  "normal",
+			"category":  "billing",
+			"channels":  []string{"sms"},
+			"metadata": map[string]any{
+				"amount":         amtStr,
+				"currency":       currency,
+				"transaction_id": txID,
+			},
+		})
 	}
 
 	c.JSON(200, finalizeTopupResponse{Received: true})

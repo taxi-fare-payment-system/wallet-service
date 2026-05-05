@@ -11,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	"wallet_service/internal/auth"
 	"wallet_service/internal/config"
 	"wallet_service/internal/db"
 	"wallet_service/internal/handlers"
+	"wallet_service/internal/messaging"
 	"wallet_service/internal/payment"
 	"wallet_service/internal/repository"
 	"wallet_service/internal/server"
@@ -41,8 +41,6 @@ func main() {
 	defer database.SQL.Close()
 
 	walletRepo := repository.NewWalletRepository(database.Gorm)
-	walletHandlers := &handlers.WalletHandlers{WalletRepo: walletRepo}
-	walletService := &services.WalletService{WalletRepo: walletRepo}
 
 	httpClient := &http.Client{Timeout: cfg.HTTPClientTimeout}
 	paymentClient, err := payment.NewClient(cfg.PaymentServiceBaseURL, httpClient)
@@ -50,14 +48,25 @@ func main() {
 		logger.Error("payment_client_init_failed", slog.Any("error", err))
 		os.Exit(1)
 	}
+
+	bus, err := messaging.NewPublisher(cfg.RabbitMQURL, cfg.AnalyticsExchange, cfg.NotificationExchange)
+	if err != nil {
+		logger.Error("rabbitmq_publisher_init_failed", slog.Any("error", err))
+		os.Exit(1)
+	}
+	defer func() { _ = bus.Close() }()
+
+	walletService := &services.WalletService{WalletRepo: walletRepo}
+	walletHandlers := &handlers.WalletHandlers{WalletRepo: walletRepo, Bus: bus}
 	topupHandlers := &handlers.TopupHandlers{
 		WalletRepo:    walletRepo,
 		WalletService: walletService,
 		PaymentClient: paymentClient,
+		Bus:           bus,
 	}
 	var tripClient *trip.Client
 	if cfg.TripServiceBaseURL != "" {
-		tc, err := trip.NewClient(cfg.TripServiceBaseURL, cfg.TripValidatePath, httpClient)
+		tc, err := trip.NewClient(cfg.TripServiceBaseURL, httpClient)
 		if err != nil {
 			logger.Error("trip_client_init_failed", slog.Any("error", err))
 			os.Exit(1)
@@ -70,20 +79,19 @@ func main() {
 		WalletService: walletService,
 		PaymentClient: paymentClient,
 		TripClient:    tripClient,
+		Bus:           bus,
 	}
-	transactionsHandlers := &handlers.TransactionsHandlers{PaymentClient: paymentClient}
-
-	var authClient *auth.Client
-	if cfg.AuthServiceBaseURL != "" {
-		ac, err := auth.NewClient(cfg.AuthServiceBaseURL, cfg.AuthVerifyAdminPath, httpClient)
-		if err != nil {
-			logger.Error("auth_client_init_failed", slog.Any("error", err))
-			os.Exit(1)
-		}
-		authClient = ac
+	transactionsHandlers := &handlers.TransactionsHandlers{
+		PaymentClient: paymentClient,
+		WalletRepo:    walletRepo,
 	}
-	adminHandlers := &handlers.AdminHandlers{WalletRepo: walletRepo, AuthClient: authClient}
-	withdrawDeleteHandlers := &handlers.WithdrawDeleteHandlers{WalletRepo: walletRepo}
+	adminHandlers := &handlers.AdminHandlers{WalletRepo: walletRepo, Bus: bus}
+	withdrawDeleteHandlers := &handlers.WithdrawDeleteHandlers{
+		WalletRepo:    walletRepo,
+		PaymentClient: paymentClient,
+		Bus:           bus,
+	}
+	assistantHandlers := &handlers.AssistantHandlers{PaymentClient: paymentClient}
 
 	router := server.NewRouter(
 		logger,
@@ -94,6 +102,7 @@ func main() {
 		transactionsHandlers,
 		adminHandlers,
 		withdrawDeleteHandlers,
+		assistantHandlers,
 	)
 
 	srv := &http.Server{

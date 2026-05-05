@@ -1,9 +1,12 @@
 package trip
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -11,13 +14,14 @@ import (
 	"wallet_service/internal/server_utils"
 )
 
+var ErrTripNotActive = errors.New("trip not found or not active")
+
 type Client struct {
-	baseURL      *url.URL
-	validatePath string
-	httpClient   *http.Client
+	baseURL    *url.URL
+	httpClient *http.Client
 }
 
-func NewClient(baseURL, validatePath string, httpClient *http.Client) (*Client, error) {
+func NewClient(baseURL string, httpClient *http.Client) (*Client, error) {
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, errors.New("trip service base url is required")
 	}
@@ -31,35 +35,31 @@ func NewClient(baseURL, validatePath string, httpClient *http.Client) (*Client, 
 	if u.Scheme == "" || u.Host == "" {
 		return nil, fmt.Errorf("invalid base url: %q", baseURL)
 	}
-	if strings.TrimSpace(validatePath) == "" {
-		return nil, errors.New("validate path is required")
-	}
 	return &Client{
-		baseURL:      u,
-		validatePath: validatePath,
-		httpClient:   httpClient,
+		baseURL:    u,
+		httpClient: httpClient,
 	}, nil
 }
 
-// ValidateTripMembership calls the configured trip validation endpoint.
-// Since the trip service spec is not present in this repo, wallet treats any 2xx response as valid
-// and any non-2xx as invalid.
-func (c *Client) ValidateTripMembership(ctx context.Context, tripID string, passengerUserID, driverUserID int64) error {
-	u := *c.baseURL
-	u.Path = strings.TrimRight(u.Path, "/") + c.validatePath
+// ValidateTripActive calls GET /trips/:id?status=ACTIVE (Trip Service).
+// A 404 or non-ACTIVE trip body yields ErrTripNotActive.
+func (c *Client) ValidateTripActive(ctx context.Context, tripID string) error {
+	tripID = strings.TrimSpace(tripID)
+	if tripID == "" {
+		return ErrTripNotActive
+	}
+	base := strings.TrimRight(c.baseURL.String(), "/")
+	reqURL := base + "/trips/" + url.PathEscape(tripID) + "?status=ACTIVE"
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return err
 	}
-	q := req.URL.Query()
-	q.Set("trip_id", strings.TrimSpace(tripID))
-	q.Set("passenger_user_id", fmt.Sprintf("%d", passengerUserID))
-	q.Set("driver_user_id", fmt.Sprintf("%d", driverUserID))
-	req.URL.RawQuery = q.Encode()
-
 	if rid := server_utils.RequestIDFromContext(ctx); rid != "" {
 		req.Header.Set("X-Request-ID", rid)
+	}
+	if auth := server_utils.AuthBearerFromContext(ctx); auth != "" {
+		req.Header.Set("Authorization", auth)
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -67,8 +67,33 @@ func (c *Client) ValidateTripMembership(ctx context.Context, tripID string, pass
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrTripNotActive
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("trip service error: status=%d", resp.StatusCode)
+	}
+	var payload struct {
+		Status string `json:"status"`
+		Data   *struct {
+			Status string `json:"status"`
+		} `json:"data"`
+	}
+	b, _ := io.ReadAll(resp.Body)
+	if len(b) == 0 {
 		return nil
 	}
-	return fmt.Errorf("trip validation failed: status=%d", resp.StatusCode)
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	if err := dec.Decode(&payload); err != nil {
+		return nil
+	}
+	st := strings.ToUpper(strings.TrimSpace(payload.Status))
+	if st == "" && payload.Data != nil {
+		st = strings.ToUpper(strings.TrimSpace(payload.Data.Status))
+	}
+	if st != "" && st != "ACTIVE" {
+		return ErrTripNotActive
+	}
+	return nil
 }

@@ -20,15 +20,17 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://postgres:root_postgres@postgres:5432/fare_wallet_service?sslmode=disable
-      PORT: "8081"
+      PORT: "8088"
       LOG_LEVEL: info
       MIGRATIONS_PATH: file://migrations
-      PAYMENT_SERVICE_BASE_URL: http://payment:8080
+      PAYMENT_SERVICE_BASE_URL: http://payment:8085
       HTTP_CLIENT_TIMEOUT: 10s
-      TRIP_SERVICE_BASE_URL: ""
-      AUTH_SERVICE_BASE_URL: ""
+      TRIP_SERVICE_BASE_URL: http://trip:8086
+      RABBITMQ_URL: ""
+      ANALYTICS_EXCHANGE: analytics_exchange
+      NOTIFICATION_EXCHANGE: notification.exchange
     ports:
-      - "8081:8081"
+      - "8088:8088"
     command: ["/bin/sh", "-lc", "/app/wallet-migrate up && /app/wallet-server"]
 
   # Optional: run payment service separately and point PAYMENT_SERVICE_BASE_URL to it.
