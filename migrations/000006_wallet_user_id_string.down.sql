@@ -1,0 +1,3 @@
+ALTER TABLE IF EXISTS wallets
+    ALTER COLUMN user_id TYPE BIGINT USING user_id::BIGINT;
+

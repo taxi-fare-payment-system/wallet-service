@@ -36,7 +36,7 @@ type TransferRequest struct {
 	ReceiverID       string  `json:"receiver_id"`
 	ReceiverFullName string  `json:"receiver_full_name"`
 	TripID           string  `json:"trip_id"`
-	SubCityID        string  `json:"sub_city_id,omitempty"`
+	SubCityID        *uint   `json:"sub_city_id,omitempty"`
 	AssistantID      string  `json:"assistant_id,omitempty"`
 	Message          string  `json:"message,omitempty"`
 }
@@ -69,7 +69,7 @@ type ChapaBanksResponse struct {
 
 type WithdrawalRequest struct {
 	Amount              float64 `json:"amount"`
-	PayerUserID         int64   `json:"payer_user_id"`
+	PayerUserID         string  `json:"payer_user_id"`
 	AccountName         string  `json:"account_name"`
 	AccountNumber       string  `json:"account_number"`
 	BankCode            string  `json:"bank_code"`

@@ -41,7 +41,7 @@ func (h *AssistantHandlers) ListEarnings(c *gin.Context) {
 
 	callerID, hasCaller := server_utils.ParseXUserID(c)
 	if !server_utils.IsPlatformAdminRole(server_utils.XUserRole(c)) {
-		if !hasCaller || strconv.FormatInt(callerID, 10) != assistantID {
+		if !hasCaller || callerID != assistantID {
 			c.JSON(403, server_utils.ErrorResponse{Message: "forbidden"})
 			return
 		}

@@ -9,6 +9,7 @@ import (
 	"wallet_service/internal/server_utils"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type TransactionsHandlers struct {
@@ -87,15 +88,14 @@ func (h *TransactionsHandlers) ListTransactions(c *gin.Context) {
 	c.JSON(200, out)
 }
 
-func (h *TransactionsHandlers) walletOwnedByUser(c *gin.Context, callerUserID int64, walletIDStr string) bool {
+func (h *TransactionsHandlers) walletOwnedByUser(c *gin.Context, callerUserID string, walletIDStr string) bool {
 	if walletIDStr == "" {
 		return true
 	}
-	walletID, err := strconv.ParseInt(walletIDStr, 10, 64)
-	if err != nil || walletID <= 0 {
+	if _, err := uuid.Parse(walletIDStr); err != nil {
 		return false
 	}
-	w, err := h.WalletRepo.GetByID(c.Request.Context(), walletID)
+	w, err := h.WalletRepo.GetByID(c.Request.Context(), walletIDStr)
 	if err != nil {
 		return false
 	}

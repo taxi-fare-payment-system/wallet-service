@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"errors"
-	"strconv"
 	"strings"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 	"wallet_service/internal/server_utils"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 )
@@ -22,13 +22,13 @@ type WalletHandlers struct {
 }
 
 type createWalletRequest struct {
-	UserID int64  `json:"user_id"`
+	UserID string `json:"user_id"`
 	Type   string `json:"type"`
 }
 
 type walletResponse struct {
-	ID         int64             `json:"id"`
-	UserID     int64             `json:"user_id"`
+	ID         string            `json:"id"`
+	UserID     string            `json:"user_id"`
 	WalletType models.WalletType `json:"wallet_type"`
 	Freezed    bool              `json:"freezed"`
 	Balance    decimal.Decimal   `json:"balance"`
@@ -37,7 +37,7 @@ type walletResponse struct {
 }
 
 type walletIDOnlyResponse struct {
-	WalletID int64 `json:"wallet_id"`
+	WalletID string `json:"wallet_id"`
 }
 
 func toWalletResponse(w models.Wallet) walletResponse {
@@ -53,9 +53,8 @@ func toWalletResponse(w models.Wallet) walletResponse {
 }
 
 func (h *WalletHandlers) GetWallet(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id := strings.TrimSpace(c.Param("id"))
+	if _, err := uuid.Parse(id); err != nil {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet id"})
 		return
 	}
@@ -74,9 +73,8 @@ func (h *WalletHandlers) GetWallet(c *gin.Context) {
 }
 
 func (h *WalletHandlers) GetWalletByUser(c *gin.Context) {
-	userIDStr := c.Param("userId")
-	userID, err := strconv.ParseInt(userIDStr, 10, 64)
-	if err != nil || userID <= 0 {
+	userID := strings.TrimSpace(c.Param("userId"))
+	if userID == "" {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid user id"})
 		return
 	}
@@ -136,7 +134,8 @@ func (h *WalletHandlers) CreateWallet(c *gin.Context) {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet type"})
 		return
 	}
-	if req.UserID <= 0 {
+	req.UserID = strings.TrimSpace(req.UserID)
+	if req.UserID == "" {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid user id"})
 		return
 	}

@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 
 	"wallet_service/internal/messaging"
@@ -75,9 +74,8 @@ func (h *WithdrawDeleteHandlers) Withdraw(c *gin.Context) {
 		return
 	}
 
-	walletIDStr := c.Param("wallet_id")
-	walletID, err := strconv.ParseInt(walletIDStr, 10, 64)
-	if err != nil || walletID <= 0 {
+	walletID := strings.TrimSpace(c.Param("wallet_id"))
+	if _, err := uuid.Parse(walletID); err != nil {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet id"})
 		return
 	}
@@ -207,7 +205,7 @@ func (h *WithdrawDeleteHandlers) Withdraw(c *gin.Context) {
 	amtStr := amt.StringFixed(2)
 	_ = h.Bus.PublishNotification(c.Request.Context(), "notification.wallet.withdrawal_initiated", map[string]any{
 		"event_id": uuid.NewString(),
-		"user_id":  strconv.FormatInt(walletRow.UserID, 10),
+		"user_id":  walletRow.UserID,
 		"type":     "withdrawal_initiated",
 		"title":    "Withdrawal Initiated",
 		"content":  "Your withdrawal of " + amtStr + " ETB to account ending " + accountEnding(req.AccountNumber) + " has been initiated.",
@@ -243,7 +241,7 @@ var (
 	errOwnerMin     = errors.New("owner wallet must keep minimum balance of 100 ETB")
 )
 
-func (h *WithdrawDeleteHandlers) reverseWithdrawCredit(ctx context.Context, walletID int64, amt decimal.Decimal) error {
+func (h *WithdrawDeleteHandlers) reverseWithdrawCredit(ctx context.Context, walletID string, amt decimal.Decimal) error {
 	db := h.WalletRepo.DB()
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		wlt, err := h.WalletRepo.LockByID(ctx, tx, walletID)
@@ -256,15 +254,14 @@ func (h *WithdrawDeleteHandlers) reverseWithdrawCredit(ctx context.Context, wall
 }
 
 func (h *WithdrawDeleteHandlers) DeleteWallet(c *gin.Context) {
-	walletIDStr := c.Param("wallet_id")
-	walletID, err := strconv.ParseInt(walletIDStr, 10, 64)
-	if err != nil || walletID <= 0 {
+	walletID := strings.TrimSpace(c.Param("wallet_id"))
+	if _, err := uuid.Parse(walletID); err != nil {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet id"})
 		return
 	}
 
 	db := h.WalletRepo.DB()
-	err = db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+	err := db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
 		wlt, err := h.WalletRepo.LockByID(c.Request.Context(), tx, walletID)
 		if err != nil {
 			return err

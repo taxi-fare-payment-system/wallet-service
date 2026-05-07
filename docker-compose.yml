@@ -1,5 +1,6 @@
 services:
   postgres:
+    profiles: ["standalone"]
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
@@ -31,7 +32,7 @@ services:
       NOTIFICATION_EXCHANGE: notification.exchange
     ports:
       - "8088:8088"
-    command: ["/bin/sh", "-lc", "/app/wallet-migrate up && /app/wallet-server"]
+    command: ["/bin/sh", "-lc", "/app/wallet-server"]
 
   # Optional: run payment service separately and point PAYMENT_SERVICE_BASE_URL to it.
   payment:

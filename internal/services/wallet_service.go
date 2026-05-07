@@ -23,17 +23,17 @@ type TransferHook func(ctx context.Context) error
 // - both wallets exist
 // - both wallets are not frozen
 // - from wallet remains non-negative
-func (s *WalletService) TransferBalance(ctx context.Context, fromWalletID, toWalletID int64, amount decimal.Decimal) error {
+func (s *WalletService) TransferBalance(ctx context.Context, fromWalletID, toWalletID string, amount decimal.Decimal) error {
 	return s.transferBalance(ctx, fromWalletID, toWalletID, amount, nil)
 }
 
 // TransferBalanceWithHook performs the same atomic transfer as TransferBalance, but runs hook
 // after balances are updated and before the DB transaction commits.
-func (s *WalletService) TransferBalanceWithHook(ctx context.Context, fromWalletID, toWalletID int64, amount decimal.Decimal, hook TransferHook) error {
+func (s *WalletService) TransferBalanceWithHook(ctx context.Context, fromWalletID, toWalletID string, amount decimal.Decimal, hook TransferHook) error {
 	return s.transferBalance(ctx, fromWalletID, toWalletID, amount, hook)
 }
 
-func (s *WalletService) transferBalance(ctx context.Context, fromWalletID, toWalletID int64, amount decimal.Decimal, hook TransferHook) error {
+func (s *WalletService) transferBalance(ctx context.Context, fromWalletID, toWalletID string, amount decimal.Decimal, hook TransferHook) error {
 	if amount.Cmp(decimal.Zero) <= 0 {
 		return ErrInvalidAmount
 	}
@@ -98,7 +98,7 @@ func (s *WalletService) transferBalance(ctx context.Context, fromWalletID, toWal
 func (s *WalletService) ApplyTopupIdempotent(
 	ctx context.Context,
 	paymentTransactionID string,
-	walletID int64,
+	walletID string,
 	amount decimal.Decimal,
 	currency string,
 	txRef *string,

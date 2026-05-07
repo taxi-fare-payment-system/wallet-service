@@ -1,5 +1,7 @@
 BEGIN;
 
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'wallet_type') THEN
@@ -8,8 +10,8 @@ BEGIN
 END $$;
 
 CREATE TABLE IF NOT EXISTS wallets (
-  id           BIGSERIAL PRIMARY KEY,
-  user_id      BIGINT NOT NULL,
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      TEXT NOT NULL,
   wallet_type  wallet_type NOT NULL,
   freezed      BOOLEAN NOT NULL DEFAULT FALSE,
   balance      NUMERIC(12,2) NOT NULL DEFAULT 0,

@@ -7,7 +7,7 @@ This document describes the **HTTP interface** exposed by this wallet service: e
 - **Base URL**: `http://<host>:<port>` (default listen port **8088**; register with the gateway team.)
 - **Content-Type**: JSON unless otherwise noted
 - **Request ID**: optional `X-Request-ID` header is accepted; the service echoes/sets `X-Request-ID` on responses.
-- **User IDs**: `user_id` values in this service are **integers** (Auth Service user id). Gateway-injected `X-User-ID` is the same id. Do not use UUIDs as `user_id` for wallet operations.
+- **User IDs**: `user_id` values in this service are **strings**. Gateway-injected `X-User-ID` is treated as the same string id.
 - **Gateway trust headers** (JWT-validated routes): `X-User-ID`, `X-User-Role`, and for scoped admins `X-Sub-City`.
 - **Payment / Trip calls**: when the wallet service calls Payment or Trip on behalf of the user, it forwards the caller’s `Authorization: Bearer …` from the incoming request.
 - **Error response shape** (most non-2xx responses):
@@ -21,7 +21,7 @@ This document describes the **HTTP interface** exposed by this wallet service: e
 ```json
 {
   "id": 1,
-  "user_id": 123,
+  "user_id": "123",
   "wallet_type": "passenger",
   "freezed": false,
   "balance": "0",
@@ -45,7 +45,7 @@ Notes:
 
 ## Health
 
-### `GET /healthz`
+### `GET /api/v1/wallet/healthz`
 
 - **Description**: liveness probe
 - **Response 200**:
@@ -54,7 +54,7 @@ Notes:
 { "status": "ok" }
 ```
 
-### `GET /readyz`
+### `GET /api/v1/wallet/readyz`
 
 - **Description**: readiness probe (includes DB ping)
 - **Response 200**:
@@ -73,9 +73,9 @@ Notes:
 
 ## Banks (payment pass-through)
 
-### `GET /banks/chapa`
+### `GET /api/v1/wallet/banks/chapa`
 
-- **Description**: forwards `GET` to Payment Service `GET /banks/chapa` (Chapa bank list; Payment caches ~24h). Callers use returned `code` values for withdrawals.
+- **Description**: forwards `GET` to Payment Service `GET /api/v1/payments/banks/chapa` (Chapa bank list; Payment caches ~24h). Callers use returned `code` values for withdrawals.
 - **Auth**: authenticated user; **`Authorization` required** so Payment can authorize the call.
 - **Response 200**: Payment Service body, e.g.
 
@@ -99,7 +99,7 @@ Notes:
 
 ## Wallets
 
-### `GET /:id`
+### `GET /api/v1/wallet/:id`
 
 - **Description**: fetch wallet by wallet id
 - **Response 200**: Wallet object
@@ -107,7 +107,7 @@ Notes:
   - 400 `{ "message": "invalid wallet id" }`
   - 404 `{ "message": "wallet not found" }`
 
-### `GET /users/:userId?type=<wallet_type>`
+### `GET /api/v1/wallet/users/:userId?type=<wallet_type>`
 
 - **Description**: fetch a user’s wallet by **numeric** user id and wallet type. Access-controlled:
   - **Own wallet** (`X-User-ID` equals `:userId`): full Wallet object.
@@ -117,7 +117,7 @@ Notes:
 - **Headers**: `X-User-ID` and `X-User-Role` are expected from the gateway for authenticated routes.
 - **Query params**:
   - `type` (**required**): `passenger | driver | owner`
-- **Response 200**: Wallet object, or `{ "wallet_id": 1 }` for the passenger→driver case above.
+- **Response 200**: Wallet object, or `{ "wallet_id": "<wallet-uuid>" }` for the passenger→driver case above.
 - **Errors**:
   - 400 `{ "message": "invalid user id" }`
   - 400 `{ "message": "missing wallet type" }`
@@ -125,14 +125,14 @@ Notes:
   - 403 `{ "message": "forbidden" }`
   - 404 `{ "message": "wallet not found" }`
 
-### `POST /`
+### `POST /api/v1/wallet`
 
-- **Description**: create a wallet (one per `(user_id, wallet_type)`). Intended for internal calls (e.g. Auth Service after registration). **`user_id` is an integer.**
+- **Description**: create a wallet (one per `(user_id, wallet_type)`). Intended for internal calls (e.g. Auth Service after registration). **`user_id` is a string.**
 - **Request (JSON)**:
 
 ```json
 {
-  "user_id": 123,
+  "user_id": "123",
   "type": "passenger"
 }
 ```
@@ -148,7 +148,7 @@ Notes:
 
 ## Top-up
 
-### `PUT /:wallet_id/topup`
+### `PUT /api/v1/wallet/:wallet_id/topup`
 
 - **Description**: create a payment-service checkout session for topping up a **passenger** wallet
 - **Request (JSON)**:
@@ -157,12 +157,13 @@ Notes:
 {
   "amount": 10,
   "phone_number": "+251900000000",
-  "first_name": "First",
-  "last_name": "Last",
   "email": "user@example.com",
   "message": "optional note"
 }
 ```
+
+- **Name source**: `first_name` and `last_name` are fetched from Auth Service `GET /api/v1/auth/me` using forwarded `Authorization` bearer token (`display_name` split into first/last parts).
+- **Phone source**: `phone_number` is optional in the request; if omitted, Wallet uses `phone` from Auth `/api/v1/auth/me`.
 
 - **Response 200**:
 
@@ -177,13 +178,13 @@ Notes:
   - 400 `{ "message": "invalid wallet id" }`
   - 400 `{ "message": "invalid json body" }`
   - 400 `{ "message": "amount must be > 0" }`
-  - 400 `{ "message": "phone_number, first_name, and last_name are required" }`
+  - 401 `{ "message": "authentication error" }` (missing/invalid token or Auth profile lookup failure)
   - 403 `{ "message": "wallet is frozen" }`
   - 403 `{ "message": "topup is only allowed for passenger wallets" }`
   - 404 `{ "message": "wallet not found" }`
   - 502 `{ "message": "<payment service error>" }`
 
-### `POST /v1/wallet/finalize-topup`
+### `POST /api/v1/wallet/finalize-topup`
 
 - **Description**: callback from Payment Service when a top-up succeeds; credits the wallet **idempotently**. Publishes analytics and (on first credit) a notification event.
 - **Request (JSON)** (from `payment_service_spec.md`):
@@ -216,7 +217,7 @@ Notes:
 
 ## Pay fare
 
-### `PUT /:wallet_id/pay-fare`
+### `PUT /api/v1/wallet/:wallet_id/pay-fare`
 
 - **Description**: atomically debits the passenger wallet, credits the driver wallet, records the transfer in Payment Service, validates the trip, and emits analytics/notification events.
 - **Requires**: `TRIP_SERVICE_BASE_URL` (e.g. `http://trip:8086`). Trip validation: `GET /trips/<trip_id>?status=ACTIVE` with forwarded `Authorization`.
@@ -225,10 +226,10 @@ Notes:
 ```json
 {
   "amount": 5,
-  "driver_wallet_id": 2,
+  "driver_wallet_id": "<wallet-uuid>",
   "trip_id": "trip-uuid",
   "receiver_full_name": "Driver Name",
-  "sub_city_id": "<uuid from trip route; optional but forwarded to Payment for ledger>",
+  "sub_city_id": "<uint from trip route; optional but forwarded to Payment for ledger>",
   "assistant_id": "<optional assistant id for notifications and Payment>",
   "message": "optional note"
 }
@@ -259,15 +260,15 @@ Notes:
 
 ## Assistant earnings
 
-### `GET /assistant/:assistantId/earnings`
+### `GET /api/v1/wallet/assistant/:assistantId/earnings`
 
-- **Description**: lists Payment Service ledger rows for an assistant for a given day (`reason=fare`). **`:assistantId`** is the assistant’s **numeric Auth user id** (same as `X-User-ID`), so it matches gateway trust headers.
+- **Description**: lists Payment Service ledger rows for an assistant for a given day (`reason=fare`). **`:assistantId`** is the assistant’s Auth user id string (same as `X-User-ID`).
 - **Auth**: the assistant (`X-User-ID` equals `:assistantId`) or `admin` / `superadmin`.
 - **Query params**:
   - `date`: `YYYY-MM-DD` (default: today UTC)
   - `limit`: 0–200 (default 50)
   - `offset`: ≥ 0 (default 0)
-- **Behavior**: proxies Payment `GET /transactions` with `assistant_id`, `reason=fare`, `date`, pagination. Requires Payment Service to support `assistant_id` (and date) filters.
+- **Behavior**: proxies Payment `GET /api/v1/payments/transactions` with `assistant_id`, `reason=fare`, `date`, pagination. Requires Payment Service to support `assistant_id` (and date) filters.
 - **Response 200**:
 
 ```json
@@ -293,9 +294,9 @@ Notes:
 
 ## Transactions (proxy)
 
-### `GET /transactions`
+### `GET /api/v1/wallet/transactions`
 
-- **Description**: proxies Payment Service `GET /transactions` with restricted query params. The caller must identify their wallet using **`sender_wallet_id` and/or `receiver_wallet_id`**; each supplied wallet id must belong to **`X-User-ID`** or the request is **403**.
+- **Description**: proxies Payment Service `GET /api/v1/payments/transactions` with restricted query params. The caller must identify their wallet using **`sender_wallet_id` and/or `receiver_wallet_id`**; each supplied wallet id must belong to **`X-User-ID`** or the request is **403**.
 - **Headers**: **`X-User-ID` required** (gateway-injected).
 - **Allowed query params**:
   - filters: `reason`, `status`, `sender_wallet_id`, `receiver_wallet_id`
@@ -329,9 +330,9 @@ Notes:
 
 ## Withdraw
 
-### `PUT /:wallet_id/withdraw`
+### `PUT /api/v1/wallet/:wallet_id/withdraw`
 
-- **Description**: validates `bank_code` against Payment’s Chapa list, debits the **driver** or **owner** wallet, calls Payment `POST /withdrawals` to start the payout, reverses the debit on Payment `500`/`502`/`503`, and publishes analytics/notification events on success.
+- **Description**: validates `bank_code` against Payment’s Chapa list, debits the **driver** or **owner** wallet, calls Payment `POST /api/v1/payments/withdrawals` to start the payout, reverses the debit on Payment `500`/`502`/`503`, and publishes analytics/notification events on success.
 - **Headers**: **`X-User-ID` required** and must own the wallet; **`Authorization` required** for Payment calls.
 - **Request (JSON)**:
 
@@ -373,7 +374,7 @@ Notes:
 
 ## Admin: freeze
 
-### `PUT /:wallet_id/freeze`
+### `PUT /api/v1/wallet/:wallet_id/freeze`
 
 - **Description**: freezes a wallet (**`admin` or `superadmin`** via gateway trust headers).
 - **Headers**:
@@ -394,7 +395,7 @@ Notes:
 
 ## Admin: find wallets
 
-### `GET /admin/wallets`
+### `GET /api/v1/wallet/admin/wallets`
 
 - **Description**: admin wallet search with filtering, sorting, and pagination. **`superadmin`** sees all wallets; **`admin`** is scoped to wallets whose `sub_city_id` matches **`X-Sub-City`** (requires wallets to have `sub_city_id` set when data model is populated).
 - **Headers**:
@@ -403,7 +404,7 @@ Notes:
   - `X-Sub-City` (**required** when role is `admin`)
 - **Query params**:
   - **filters**:
-    - `user_id` (int64)
+    - `user_id` (string)
     - `wallet_type` (`passenger|driver|owner`)
     - `freezed` (`true|false`)
     - `min_balance` (decimal string)
@@ -444,7 +445,7 @@ Notes:
 
 ## Delete wallet
 
-### `DELETE /:wallet_id`
+### `DELETE /api/v1/wallet/:wallet_id`
 
 - **Description**: deletes a wallet if its balance is zero
 - **Response 204**: no content

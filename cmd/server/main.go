@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"wallet_service/internal/auth"
 	"wallet_service/internal/config"
 	"wallet_service/internal/db"
 	"wallet_service/internal/handlers"
@@ -40,9 +41,19 @@ func main() {
 	}
 	defer database.SQL.Close()
 
+	if err := db.EnsureSchema(cfg, database, logger); err != nil {
+		logger.Error("db_schema_init_failed", slog.Any("error", err))
+		os.Exit(1)
+	}
+
 	walletRepo := repository.NewWalletRepository(database.Gorm)
 
 	httpClient := &http.Client{Timeout: cfg.HTTPClientTimeout}
+	authClient, err := auth.NewClient(cfg.AuthServiceBaseURL, httpClient)
+	if err != nil {
+		logger.Error("auth_client_init_failed", slog.Any("error", err))
+		os.Exit(1)
+	}
 	paymentClient, err := payment.NewClient(cfg.PaymentServiceBaseURL, httpClient)
 	if err != nil {
 		logger.Error("payment_client_init_failed", slog.Any("error", err))
@@ -61,6 +72,7 @@ func main() {
 	topupHandlers := &handlers.TopupHandlers{
 		WalletRepo:    walletRepo,
 		WalletService: walletService,
+		AuthClient:    authClient,
 		PaymentClient: paymentClient,
 		Bus:           bus,
 	}

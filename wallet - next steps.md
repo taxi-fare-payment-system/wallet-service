@@ -20,7 +20,7 @@ Not explicitly documented. Coordinate with the gateway team and register on port
 
 ## User ID Type
 
-`user_id` in this service is always an **integer** (auto-increment, same as Auth Service's user ID). The JWT `sub` claim is this integer as a string — parse it to integer before using it as `user_id` in any wallet operation or comparison. Never store or accept a UUID as a `user_id`.
+`user_id` in this service is always a **string** (same as Auth Service's user ID format). The JWT `sub` claim is consumed as-is for wallet operations and comparisons.
 
 ---
 
@@ -29,14 +29,14 @@ Not explicitly documented. Coordinate with the gateway team and register on port
 Auth Service will call `POST /` after every successful user registration for `passenger` and `driver` roles. Wallet Service already supports this — ensure it is robust:
 
 1. The `409` conflict response (`"wallet already exists for user and type"`) must be returned correctly when Auth retries wallet creation. Auth treats `409` as success.
-2. The `user_id` field in the request is an **integer**. Confirm Auth Service passes the user's numeric ID (not UUID). If Auth uses UUIDs or string IDs, this is a type mismatch that must be resolved — coordinate with Auth team.
+2. The `user_id` field in the request is a **string**.
 3. For `owner` role users, Auth Service should also create a wallet with `type: "owner"` at registration. Confirm this is handled.
 
 **Expected call from Auth Service:**
 ```
 POST http://wallet:8088/
 Headers: (internal call, no JWT needed)
-Body: { "user_id": 123, "type": "passenger" }
+Body: { "user_id": "123", "type": "passenger" }
 ```
 
 ---
@@ -215,13 +215,13 @@ The pay-fare request body should accept an optional `assistant_id` and a `sub_ci
   "trip_id": "trip-uuid",
   "receiver_full_name": "Driver Name",
   "assistant_id": "assistant-uuid-or-null",
-  "sub_city_id": "<uuid inherited from the trip's route>"
+  "sub_city_id": "<uint inherited from the trip's route>"
 }
 ```
 
 The calling service (Trip Service) resolves `assistant_id` from Auth and reads `sub_city_id` from the trip record before calling Wallet (see Trip next-steps Tasks 4 and 7). Wallet passes `sub_city_id` to Payment `POST /transfers` (for ledger attribution). `sub_city_id` is specific to fare payments — Wallet does not populate it for any other operation (topup, withdraw, etc.).
 
-> **No SubCity model or repository here.** Wallet Service never validates or looks up sub_city details — it only forwards the UUID it received from the caller. Auth Service owns the SubCity entity. If sub_city details are ever needed: get one with `GET http://auth:8082/api/v1/auth/subcities/:id`, list all with `GET http://auth:8082/api/v1/auth/subcities`. Both require a valid JWT.
+> **No SubCity model or repository here.** Wallet Service never validates or looks up sub_city details — it only forwards the id it received from the caller. Auth Service owns the SubCity entity. If sub_city details are ever needed: get one with `GET http://auth:8082/api/v1/auth/subcities/:id`, list all with `GET http://auth:8082/api/v1/auth/subcities`. Both require a valid JWT.
 
 Include `assistant_id` in the `notification.wallet.pay_fare_succeeded` event metadata so Notification Service can dispatch a separate notification to the assistant.
 
@@ -297,7 +297,7 @@ Headers: Authorization: Bearer <forwarded JWT>
 Body:
 {
   "amount": <amount>,
-  "payer_user_id": <X-User-ID as integer>,
+  "payer_user_id": "<X-User-ID as string>",
   "account_name": "<account_name>",
   "account_number": "<account_number>",
   "bank_code": "<bank_code>",

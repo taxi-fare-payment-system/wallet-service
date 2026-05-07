@@ -20,24 +20,24 @@ type AdminHandlers struct {
 	Bus        *messaging.Publisher
 }
 
-func (h *AdminHandlers) requireTrustedAdmin(c *gin.Context) (actorUserID int64, ok bool) {
+func (h *AdminHandlers) requireTrustedAdmin(c *gin.Context) (actorUserID string, ok bool) {
 	role := server_utils.XUserRole(c)
 	if !server_utils.IsPlatformAdminRole(role) {
 		c.JSON(403, server_utils.ErrorResponse{Message: "admin access required"})
-		return 0, false
+		return "", false
 	}
 	actorUserID, ok = server_utils.ParseXUserID(c)
 	if !ok {
 		c.JSON(401, server_utils.ErrorResponse{Message: "missing or invalid X-User-ID"})
-		return 0, false
+		return "", false
 	}
 	return actorUserID, true
 }
 
 func (h *AdminHandlers) FreezeWallet(c *gin.Context) {
 	walletIDStr := c.Param("wallet_id")
-	walletID, err := strconv.ParseInt(walletIDStr, 10, 64)
-	if err != nil || walletID <= 0 {
+	walletID := strings.TrimSpace(walletIDStr)
+	if _, err := uuid.Parse(walletID); err != nil {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet id"})
 		return
 	}
@@ -68,7 +68,7 @@ func (h *AdminHandlers) FreezeWallet(c *gin.Context) {
 
 	_ = h.Bus.PublishNotification(c.Request.Context(), "notification.wallet.frozen", map[string]any{
 		"event_id":  uuid.NewString(),
-		"user_id":   strconv.FormatInt(w.UserID, 10),
+		"user_id":   w.UserID,
 		"user_role": string(w.WalletType),
 		"type":      "wallet_frozen",
 		"title":     "Wallet Frozen",
@@ -139,8 +139,8 @@ func (h *AdminHandlers) FindWallets(c *gin.Context) {
 	qdb := h.WalletRepo.DB().WithContext(c.Request.Context()).Model(&models.Wallet{})
 
 	if roleLower == "admin" {
-		sub := server_utils.XSubCity(c)
-		if sub == "" {
+		sub, ok := server_utils.ParseXSubCity(c)
+		if !ok {
 			c.JSON(400, server_utils.ErrorResponse{Message: "missing X-Sub-City"})
 			return
 		}
@@ -148,8 +148,8 @@ func (h *AdminHandlers) FindWallets(c *gin.Context) {
 	}
 
 	if v := c.Query("user_id"); v != "" {
-		userID, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || userID <= 0 {
+		userID := strings.TrimSpace(v)
+		if userID == "" {
 			c.JSON(400, server_utils.ErrorResponse{Message: "invalid user_id"})
 			return
 		}

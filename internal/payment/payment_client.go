@@ -16,7 +16,7 @@ func (c *Client) Initiate(ctx context.Context, req InitiateRequest) (any, error)
 	// - wallet topup: { transaction_id, checkout_url }
 	// - fare/refund initiate path: { transaction_id, tx_ref }
 	var raw map[string]any
-	_, err := c.doJSON(ctx, http.MethodPost, "/initiate", req, &raw)
+	_, err := c.doJSON(ctx, http.MethodPost, "/api/v1/payments/initiate", req, &raw)
 	if err != nil {
 		return nil, err
 	}
@@ -25,19 +25,19 @@ func (c *Client) Initiate(ctx context.Context, req InitiateRequest) (any, error)
 
 func (c *Client) InitiateTopup(ctx context.Context, req InitiateRequest) (InitiateTopupResponse, error) {
 	var out InitiateTopupResponse
-	_, err := c.doJSON(ctx, http.MethodPost, "/initiate", req, &out)
+	_, err := c.doJSON(ctx, http.MethodPost, "/api/v1/payments/initiate", req, &out)
 	return out, err
 }
 
 func (c *Client) Transfer(ctx context.Context, req TransferRequest) (TransferResponse, error) {
 	var out TransferResponse
-	_, err := c.doJSON(ctx, http.MethodPost, "/transfers", req, &out)
+	_, err := c.doJSON(ctx, http.MethodPost, "/api/v1/payments/transfers", req, &out)
 	return out, err
 }
 
 func (c *Client) ListTransactions(ctx context.Context, query url.Values) (TransactionsListResponse, error) {
 	var out TransactionsListResponse
-	p := "/transactions"
+	p := "/api/v1/payments/transactions"
 	if len(query) > 0 {
 		p = fmt.Sprintf("%s?%s", p, query.Encode())
 	}
@@ -47,13 +47,13 @@ func (c *Client) ListTransactions(ctx context.Context, query url.Values) (Transa
 
 func (c *Client) GetChapaBanks(ctx context.Context) (ChapaBanksResponse, error) {
 	var out ChapaBanksResponse
-	_, err := c.doJSON(ctx, http.MethodGet, "/banks/chapa", nil, &out)
+	_, err := c.doJSON(ctx, http.MethodGet, "/api/v1/payments/banks/chapa", nil, &out)
 	return out, err
 }
 
 func (c *Client) InitiateWithdrawal(ctx context.Context, req WithdrawalRequest) (WithdrawalResponse, error) {
 	var out WithdrawalResponse
-	_, err := c.doJSON(ctx, http.MethodPost, "/withdrawals", req, &out)
+	_, err := c.doJSON(ctx, http.MethodPost, "/api/v1/payments/withdrawals", req, &out)
 	return out, err
 }
 

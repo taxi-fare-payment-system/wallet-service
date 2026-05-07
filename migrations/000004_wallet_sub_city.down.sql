@@ -1,2 +1,2 @@
-ALTER TABLE wallets
+ALTER TABLE IF EXISTS wallets
     DROP COLUMN IF EXISTS sub_city_id;

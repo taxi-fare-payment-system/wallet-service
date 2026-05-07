@@ -30,10 +30,12 @@ func NewRouter(
 	r.Use(GinRequestIDMiddleware())
 	r.Use(GinAccessLogMiddleware(logger))
 
-	r.GET("/healthz", func(c *gin.Context) {
+	base := "/api/v1/wallet"
+
+	r.GET(base+"/healthz", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
-	r.GET("/readyz", func(c *gin.Context) {
+	r.GET(base+"/readyz", func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 		defer cancel()
 		if err := sqlDB.PingContext(ctx); err != nil {
@@ -43,24 +45,24 @@ func NewRouter(
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	r.GET("/banks/chapa", withdrawDeleteHandlers.ListChapaBanks)
-	r.GET("/assistant/:assistantId/earnings", assistantHandlers.ListEarnings)
-	r.GET("/transactions", transactionsHandlers.ListTransactions)
+	r.GET(base+"/banks/chapa", withdrawDeleteHandlers.ListChapaBanks)
+	r.GET(base+"/assistant/:assistantId/earnings", assistantHandlers.ListEarnings)
+	r.GET(base+"/transactions", transactionsHandlers.ListTransactions)
 
-	r.POST("/", walletHandlers.CreateWallet)
-	r.GET("/users/:userId", walletHandlers.GetWalletByUser)
-	r.GET("/:id", walletHandlers.GetWallet)
+	r.POST(base, walletHandlers.CreateWallet)
+	r.GET(base+"/users/:userId", walletHandlers.GetWalletByUser)
+	r.GET(base+"/:id", walletHandlers.GetWallet)
 
-	r.PUT("/:wallet_id/topup", topupHandlers.TopupWallet)
-	r.POST("/v1/wallet/finalize-topup", topupHandlers.FinalizeTopup)
+	r.PUT(base+"/:wallet_id/topup", topupHandlers.TopupWallet)
+	r.POST(base+"/finalize-topup", topupHandlers.FinalizeTopup)
 
-	r.PUT("/:wallet_id/pay-fare", payFareHandlers.PayFare)
+	r.PUT(base+"/:wallet_id/pay-fare", payFareHandlers.PayFare)
 
-	r.PUT("/:wallet_id/withdraw", withdrawDeleteHandlers.Withdraw)
-	r.PUT("/:wallet_id/freeze", adminHandlers.FreezeWallet)
-	r.DELETE("/:wallet_id", withdrawDeleteHandlers.DeleteWallet)
+	r.PUT(base+"/:wallet_id/withdraw", withdrawDeleteHandlers.Withdraw)
+	r.PUT(base+"/:wallet_id/freeze", adminHandlers.FreezeWallet)
+	r.DELETE(base+"/:wallet_id", withdrawDeleteHandlers.DeleteWallet)
 
-	r.GET("/admin/wallets", adminHandlers.FindWallets)
+	r.GET(base+"/admin/wallets", adminHandlers.FindWallets)
 
 	return r
 }
