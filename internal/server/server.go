@@ -23,6 +23,7 @@ func NewRouter(
 	transactionsHandlers *handlers.TransactionsHandlers,
 	adminHandlers *handlers.AdminHandlers,
 	withdrawDeleteHandlers *handlers.WithdrawDeleteHandlers,
+	transferHandlers *handlers.TransferHandlers,
 ) *gin.Engine {
 	r := gin.New()
 	r.Use(GinRecoveryMiddleware(logger))
@@ -51,8 +52,9 @@ func NewRouter(
 	r.PUT("/:wallet_id/topup", topupHandlers.TopupWallet)
 	r.POST("/v1/wallet/finalize-topup", topupHandlers.FinalizeTopup)
 
-	// Pay fare
+	// Pay fare & Transfer
 	r.PUT("/:wallet_id/pay-fare", payFareHandlers.PayFare)
+	r.POST("/:wallet_id/transfer", transferHandlers.Transfer)
 
 	// Transaction history proxy
 	r.GET("/transactions", transactionsHandlers.ListTransactions)
