@@ -104,6 +104,11 @@ func main() {
 		Bus:           bus,
 	}
 	assistantHandlers := &handlers.AssistantHandlers{PaymentClient: paymentClient}
+	transferHandlers := &handlers.TransferHandlers{
+		WalletRepo:    walletRepo,
+		WalletService: walletService,
+		PaymentClient: paymentClient,
+	}
 
 	router := server.NewRouter(
 		logger,
@@ -115,6 +120,7 @@ func main() {
 		adminHandlers,
 		withdrawDeleteHandlers,
 		assistantHandlers,
+		transferHandlers,
 	)
 
 	srv := &http.Server{
