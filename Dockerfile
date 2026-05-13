@@ -23,7 +23,6 @@ COPY migrations /app/migrations
 ENV PORT=8081
 ENV MIGRATIONS_PATH=file://migrations
 
-EXPOSE 8081
+EXPOSE 3000
 
 CMD ["/app/wallet-server"]
-
