@@ -109,6 +109,7 @@ func main() {
 		WalletRepo:    walletRepo,
 		WalletService: walletService,
 		PaymentClient: paymentClient,
+		AuthClient:    authClient,
 	}
 
 	router := server.NewRouter(
