@@ -376,7 +376,7 @@ PAYMENT_SERVICE_BASE_URL=http://payment:8085
 `GET /transactions` already proxies Payment Service. Ensure it is accessible to authenticated passengers and drivers via the gateway:
 
 - Route: `GET /api/v1/wallet/transactions`
-- The caller must filter by their own wallet ID (`sender_wallet_id` or `receiver_wallet_id`). Enforce this at the wallet service level: extract `X-User-ID` (or JWT `sub`) and verify the requested wallet belongs to that user before proxying.
+- `sender_wallet_id` and `receiver_wallet_id` are optional. When either is supplied, verify it belongs to `X-User-ID` before proxying. When neither is supplied, forward gateway trust headers to Payment so it can scope results for the caller.
 - Return `403` if the user tries to query another user's wallet transactions.
 
 ---

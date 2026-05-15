@@ -296,10 +296,10 @@ Notes:
 
 ### `GET /api/v1/wallet/transactions`
 
-- **Description**: proxies Payment Service `GET /api/v1/payments/transactions` with restricted query params. The caller must identify their wallet using **`sender_wallet_id` and/or `receiver_wallet_id`**; each supplied wallet id must belong to **`X-User-ID`** or the request is **403**.
+- **Description**: proxies Payment Service `GET /api/v1/payments/transactions` with restricted query params. **`sender_wallet_id` and `receiver_wallet_id` are optional**; when either is supplied, that wallet id must belong to **`X-User-ID`** or the request is **403**. With neither filter, Payment scopes results using forwarded gateway trust headers (`X-User-ID`, `X-User-Role`).
 - **Headers**: **`X-User-ID` required** (gateway-injected).
 - **Allowed query params**:
-  - filters: `reason`, `status`, `sender_wallet_id`, `receiver_wallet_id`
+  - filters: `reason`, `status`, `sender_wallet_id` (optional), `receiver_wallet_id` (optional)
   - sorting: `sort`, `order`
   - pagination: `limit` (0–200), `offset` (≥ 0)
 - **Forbidden query params**:
@@ -318,8 +318,7 @@ Notes:
 
 - **Errors**:
   - 401 `{ "message": "missing X-User-ID" }`
-  - 400 `{ "message": "sender_wallet_id or receiver_wallet_id required" }`
-  - 403 `{ "message": "forbidden" }`
+  - 403 `{ "message": "forbidden" }` (supplied wallet id does not belong to caller)
   - 400 `{ "message": "query param not supported: payer_user_id" }`
   - 400 `{ "message": "unknown query param: <name>" }`
   - 400 `{ "message": "invalid limit" }`

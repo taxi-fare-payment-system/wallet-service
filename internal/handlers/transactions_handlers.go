@@ -53,9 +53,9 @@ func (h *TransactionsHandlers) ListTransactions(c *gin.Context) {
 		}
 	}
 
+	// Wallet filters are optional; when provided, each must belong to the caller.
 	sender := q.Get("sender_wallet_id")
 	receiver := q.Get("receiver_wallet_id")
-
 	if !h.walletOwnedByUser(c, callerID, sender) || !h.walletOwnedByUser(c, callerID, receiver) {
 		c.JSON(403, server_utils.ErrorResponse{Message: "forbidden"})
 		return
