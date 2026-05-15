@@ -1,9 +1,13 @@
 package handlers
 
 import (
+	"errors"
+	"log/slog"
 	"net/url"
 	"strconv"
+	"strings"
 
+	"wallet_service/internal/models"
 	"wallet_service/internal/payment"
 	"wallet_service/internal/repository"
 	"wallet_service/internal/server_utils"
@@ -13,6 +17,7 @@ import (
 )
 
 type TransactionsHandlers struct {
+	Logger        *slog.Logger
 	PaymentClient *payment.Client
 	WalletRepo    *repository.WalletRepository
 }
@@ -31,7 +36,10 @@ var allowedTransactionQueryParams = map[string]bool{
 var forbiddenTransactionQueryParams = map[string]bool{
 	"payer_user_id": true,
 	"trip_id":       true,
+	"wallet_id":     true,
 }
+
+var errNoWalletForRole = errors.New("no wallet for role")
 
 func (h *TransactionsHandlers) ListTransactions(c *gin.Context) {
 	callerID, ok := server_utils.ParseXUserID(c)
@@ -53,12 +61,34 @@ func (h *TransactionsHandlers) ListTransactions(c *gin.Context) {
 		}
 	}
 
-	// Wallet filters are optional; when provided, each must belong to the caller.
-	sender := q.Get("sender_wallet_id")
-	receiver := q.Get("receiver_wallet_id")
+	sender := strings.TrimSpace(q.Get("sender_wallet_id"))
+	receiver := strings.TrimSpace(q.Get("receiver_wallet_id"))
+
 	if !h.walletOwnedByUser(c, callerID, sender) || !h.walletOwnedByUser(c, callerID, receiver) {
 		c.JSON(403, server_utils.ErrorResponse{Message: "forbidden"})
 		return
+	}
+
+	proxyQ := url.Values{}
+	for key, vals := range q {
+		proxyQ[key] = append([]string(nil), vals...)
+	}
+
+	if sender == "" && receiver == "" && !server_utils.IsPlatformAdminRole(server_utils.XUserRole(c)) {
+		walletID, err := h.resolveCallerWalletID(c, callerID)
+		if err != nil {
+			if repository.IsNotFound(err) {
+				c.JSON(404, server_utils.ErrorResponse{Message: "wallet not found"})
+				return
+			}
+			if errors.Is(err, errNoWalletForRole) {
+				c.JSON(403, server_utils.ErrorResponse{Message: "forbidden"})
+				return
+			}
+			c.JSON(500, server_utils.ErrorResponse{Message: "internal error"})
+			return
+		}
+		proxyQ.Set("wallet_id", walletID)
 	}
 
 	if lim := q.Get("limit"); lim != "" {
@@ -78,12 +108,49 @@ func (h *TransactionsHandlers) ListTransactions(c *gin.Context) {
 
 	ctx := server_utils.WithTrustUserID(c.Request.Context(), callerID)
 	ctx = server_utils.WithTrustUserRole(ctx, server_utils.XUserRole(c))
-	out, err := h.PaymentClient.ListTransactions(ctx, url.Values(q))
+	out, err := h.PaymentClient.ListTransactions(ctx, proxyQ)
 	if err != nil {
+		if h.Logger != nil {
+			logAttrs := []any{
+				slog.String("request_id", server_utils.RequestIDFromContext(c.Request.Context())),
+				slog.String("caller_user_id", callerID),
+				slog.Any("error", err),
+			}
+			var apiErr *payment.APIError
+			if errors.As(err, &apiErr) {
+				logAttrs = append(logAttrs, slog.Int("payment_status", apiErr.StatusCode))
+			}
+			h.Logger.Error("payment_list_transactions_failed", logAttrs...)
+		}
 		c.JSON(502, server_utils.ErrorResponse{Message: err.Error()})
 		return
 	}
 	c.JSON(200, out)
+}
+
+func (h *TransactionsHandlers) resolveCallerWalletID(c *gin.Context, userID string) (string, error) {
+	walletType, ok := walletTypeForRole(server_utils.XUserRole(c))
+	if !ok {
+		return "", errNoWalletForRole
+	}
+	w, err := h.WalletRepo.GetByUserIDAndType(c.Request.Context(), userID, walletType)
+	if err != nil {
+		return "", err
+	}
+	return w.ID, nil
+}
+
+func walletTypeForRole(role string) (models.WalletType, bool) {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "passenger":
+		return models.WalletTypePassenger, true
+	case "driver":
+		return models.WalletTypeDriver, true
+	case "owner":
+		return models.WalletTypeOwner, true
+	default:
+		return "", false
+	}
 }
 
 func (h *TransactionsHandlers) walletOwnedByUser(c *gin.Context, callerUserID string, walletIDStr string) bool {

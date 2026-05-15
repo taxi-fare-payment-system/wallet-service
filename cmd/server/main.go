@@ -94,6 +94,7 @@ func main() {
 		Bus:           bus,
 	}
 	transactionsHandlers := &handlers.TransactionsHandlers{
+		Logger:        logger,
 		PaymentClient: paymentClient,
 		WalletRepo:    walletRepo,
 	}

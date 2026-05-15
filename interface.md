@@ -296,14 +296,14 @@ Notes:
 
 ### `GET /api/v1/wallet/transactions`
 
-- **Description**: proxies Payment Service `GET /api/v1/payments/transactions` with restricted query params. **`sender_wallet_id` and `receiver_wallet_id` are optional**; when either is supplied, that wallet id must belong to **`X-User-ID`** or the request is **403**. With neither filter, Payment scopes results using forwarded gateway trust headers (`X-User-ID`, `X-User-Role`).
+- **Description**: proxies Payment Service `GET /api/v1/payments/transactions` with restricted query params. **`sender_wallet_id` and `receiver_wallet_id` are optional**; when either is supplied, that wallet id must belong to **`X-User-ID`** or the request is **403**. When neither is supplied, Wallet resolves the caller’s wallet from **`X-User-ID`** and **`X-User-Role`** (`passenger` → passenger wallet, `driver` → driver wallet, `owner` → owner wallet) and forwards it to Payment as **`wallet_id`**. **`admin` / `superadmin`** may omit all wallet filters.
 - **Headers**: **`X-User-ID` required** (gateway-injected).
 - **Allowed query params**:
   - filters: `reason`, `status`, `sender_wallet_id` (optional), `receiver_wallet_id` (optional)
   - sorting: `sort`, `order`
   - pagination: `limit` (0–200), `offset` (≥ 0)
-- **Forbidden query params**:
-  - `payer_user_id`, `trip_id`
+- **Forbidden query params** (set server-side when auto-resolving):
+  - `payer_user_id`, `trip_id`, `wallet_id`
 - **Response 200**: payment service response shape, e.g.
 
 ```json
@@ -318,7 +318,8 @@ Notes:
 
 - **Errors**:
   - 401 `{ "message": "missing X-User-ID" }`
-  - 403 `{ "message": "forbidden" }` (supplied wallet id does not belong to caller)
+  - 403 `{ "message": "forbidden" }` (supplied wallet id does not belong to caller, or role has no wallet mapping)
+  - 404 `{ "message": "wallet not found" }` (caller has no wallet for their role)
   - 400 `{ "message": "query param not supported: payer_user_id" }`
   - 400 `{ "message": "unknown query param: <name>" }`
   - 400 `{ "message": "invalid limit" }`
