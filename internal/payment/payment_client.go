@@ -3,7 +3,6 @@ package payment
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -37,11 +36,7 @@ func (c *Client) Transfer(ctx context.Context, req TransferRequest) (TransferRes
 
 func (c *Client) ListTransactions(ctx context.Context, query url.Values) (TransactionsListResponse, error) {
 	var out TransactionsListResponse
-	p := "/api/v1/payments/transactions"
-	if len(query) > 0 {
-		p = fmt.Sprintf("%s?%s", p, query.Encode())
-	}
-	_, err := c.doJSON(ctx, http.MethodGet, p, nil, &out)
+	_, err := c.doJSONQuery(ctx, http.MethodGet, "/api/v1/payments/transactions", query, nil, &out)
 	return out, err
 }
 
