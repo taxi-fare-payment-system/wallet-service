@@ -69,6 +69,12 @@ func (c *Client) doJSON(ctx context.Context, method, p string, in any, out any) 
 	if rid := server_utils.RequestIDFromContext(ctx); rid != "" {
 		req.Header.Set("X-Request-ID", rid)
 	}
+	if uid := server_utils.TrustUserIDFromContext(ctx); uid != "" {
+		req.Header.Set("X-User-ID", uid)
+	}
+	if role := server_utils.TrustUserRoleFromContext(ctx); role != "" {
+		req.Header.Set("X-User-Role", role)
+	}
 	if auth := server_utils.AuthBearerFromContext(ctx); auth != "" {
 		req.Header.Set("Authorization", auth)
 	}

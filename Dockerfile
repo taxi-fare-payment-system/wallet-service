@@ -20,7 +20,7 @@ COPY --from=build /out/wallet-server /app/wallet-server
 COPY --from=build /out/wallet-migrate /app/wallet-migrate
 COPY migrations /app/migrations
 
-ENV PORT=8081
+ENV PORT=3000
 ENV MIGRATIONS_PATH=file://migrations
 
 EXPOSE 3000

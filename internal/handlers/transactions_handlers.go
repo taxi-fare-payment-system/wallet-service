@@ -55,10 +55,6 @@ func (h *TransactionsHandlers) ListTransactions(c *gin.Context) {
 
 	sender := q.Get("sender_wallet_id")
 	receiver := q.Get("receiver_wallet_id")
-	if sender == "" && receiver == "" {
-		c.JSON(400, server_utils.ErrorResponse{Message: "sender_wallet_id or receiver_wallet_id required"})
-		return
-	}
 
 	if !h.walletOwnedByUser(c, callerID, sender) || !h.walletOwnedByUser(c, callerID, receiver) {
 		c.JSON(403, server_utils.ErrorResponse{Message: "forbidden"})
@@ -80,7 +76,9 @@ func (h *TransactionsHandlers) ListTransactions(c *gin.Context) {
 		}
 	}
 
-	out, err := h.PaymentClient.ListTransactions(c.Request.Context(), url.Values(q))
+	ctx := server_utils.WithTrustUserID(c.Request.Context(), callerID)
+	ctx = server_utils.WithTrustUserRole(ctx, server_utils.XUserRole(c))
+	out, err := h.PaymentClient.ListTransactions(ctx, url.Values(q))
 	if err != nil {
 		c.JSON(502, server_utils.ErrorResponse{Message: err.Error()})
 		return
