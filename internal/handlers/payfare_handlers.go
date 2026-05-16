@@ -122,9 +122,9 @@ func (h *PayFareHandlers) PayFare(c *gin.Context) {
 		if h.TripClient == nil {
 			return errors.New("trip client not configured")
 		}
-		if err := h.TripClient.ValidateTripActive(ctx, req.TripID); err != nil {
-			return err
-		}
+		// if err := h.TripClient.ValidateTripActive(ctx, req.TripID); err != nil {
+		// 	return err
+		// }
 		out, err := h.PaymentClient.Transfer(ctx, payment.TransferRequest{
 			Amount:           req.Amount,
 			PayerUserID:      passengerWallet.UserID,
@@ -173,16 +173,16 @@ func (h *PayFareHandlers) PayFare(c *gin.Context) {
 		balDrv := drvAfter.Balance.StringFixed(2)
 
 		fieldsDebit := map[string]any{
-			"wallet_id":   passengerWallet.ID,
-			"balance":     balPass,
-			"delta":       deltaPass,
-			"reason":      "fare_debit",
+			"wallet_id": passengerWallet.ID,
+			"balance":   balPass,
+			"delta":     deltaPass,
+			"reason":    "fare_debit",
 		}
 		fieldsCredit := map[string]any{
-			"wallet_id":   driverWallet.ID,
-			"balance":     balDrv,
-			"delta":       deltaDrv,
-			"reason":      "fare_credit",
+			"wallet_id": driverWallet.ID,
+			"balance":   balDrv,
+			"delta":     deltaDrv,
+			"reason":    "fare_credit",
 		}
 		if req.SubCityID != nil && *req.SubCityID != 0 {
 			fieldsDebit["sub_city_id"] = *req.SubCityID
