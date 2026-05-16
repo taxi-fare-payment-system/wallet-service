@@ -144,6 +144,7 @@ type finalizeTopupRequest struct {
 	ReceiverWalletID string `json:"receiver_wallet_id"`
 	Amount           string `json:"amount"`
 	Currency         string `json:"currency"`
+	PhoneNumber      string `json:"phone_number"`
 }
 
 type finalizeTopupResponse struct {
@@ -225,10 +226,11 @@ func (h *TopupHandlers) FinalizeTopup(c *gin.Context) {
 			"content":   "Your wallet has been credited " + amtStr + " ETB.",
 			"priority":  "normal",
 			"category":  "billing",
-			"channels":  []string{"sms"},
+			"channels":  []string{"sms", "push"},
 			"metadata": map[string]any{
 				"amount":         amtStr,
 				"currency":       currency,
+				"phone":          strings.TrimSpace(req.PhoneNumber),
 				"transaction_id": txID,
 			},
 		})
