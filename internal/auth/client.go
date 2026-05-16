@@ -40,6 +40,19 @@ type MeResponse struct {
 	} `json:"data"`
 }
 
+// UserByPhoneResponse matches Auth `GET /api/v1/auth/users/by-phone` (UserResponse in data).
+type UserByPhoneResponse struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+	Data    struct {
+		ID          string `json:"id"`
+		Phone       string `json:"phone"`
+		DisplayName string `json:"display_name"`
+		Role        string `json:"role"`
+		IsVerified  bool   `json:"is_verified"`
+	} `json:"data"`
+}
+
 // InternalUserContactResponse matches Auth `GET /internal/users/:id/contact` (auth.md).
 type InternalUserContactResponse struct {
 	Status  string `json:"status"`
@@ -77,6 +90,46 @@ func (c *Client) meURL() string {
 func (c *Client) GetMe(ctx context.Context) (MeResponse, error) {
 	var out MeResponse
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.meURL(), nil)
+	if err != nil {
+		return out, err
+	}
+	if rid := server_utils.RequestIDFromContext(ctx); rid != "" {
+		req.Header.Set("X-Request-ID", rid)
+	}
+	if auth := server_utils.AuthBearerFromContext(ctx); auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var er server_utils.ErrorResponse
+		_ = json.NewDecoder(resp.Body).Decode(&er)
+		return out, &APIError{StatusCode: resp.StatusCode, Message: er.Message}
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+func (c *Client) userByPhoneURL(phone string) string {
+	u := *c.baseURL
+	u.Path = path.Join(strings.TrimRight(u.Path, "/"), "/api/v1/auth/users/by-phone")
+	q := u.Query()
+	q.Set("phone", phone)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// GetUserByPhone looks up a user by phone (requires caller JWT in context).
+func (c *Client) GetUserByPhone(ctx context.Context, phone string) (UserByPhoneResponse, error) {
+	var out UserByPhoneResponse
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.userByPhoneURL(phone), nil)
 	if err != nil {
 		return out, err
 	}

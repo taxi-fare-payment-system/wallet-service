@@ -23,9 +23,9 @@ type TransferHandlers struct {
 }
 
 type transferRequest struct {
-	Amount     float64 `json:"amount"`
-	ToWalletID string  `json:"to_wallet_id"`
-	Message    string  `json:"message,omitempty"`
+	Amount        float64 `json:"amount"`
+	ToPhoneNumber string  `json:"to_phone_number"`
+	Message       string  `json:"message,omitempty"`
 }
 
 func (h *TransferHandlers) Transfer(c *gin.Context) {
@@ -40,20 +40,9 @@ func (h *TransferHandlers) Transfer(c *gin.Context) {
 		c.JSON(400, server_utils.ErrorResponse{Message: "amount must be > 0"})
 		return
 	}
-	if len(strings.TrimSpace(req.ToWalletID)) == 0 {
-		c.JSON(400, server_utils.ErrorResponse{Message: "invalid to_wallet_id"})
-		return
-	}
-
-	fromWallet, err := h.WalletRepo.GetByID(c.Request.Context(), fromWalletID)
-	if err != nil {
-		c.JSON(404, server_utils.ErrorResponse{Message: "source wallet not found"})
-		return
-	}
-
-	toWallet, err := h.WalletRepo.GetByID(c.Request.Context(), strings.TrimSpace(req.ToWalletID))
-	if err != nil {
-		c.JSON(404, server_utils.ErrorResponse{Message: "destination wallet not found"})
+	toPhone := strings.TrimSpace(req.ToPhoneNumber)
+	if toPhone == "" {
+		c.JSON(400, server_utils.ErrorResponse{Message: "invalid to_phone_number"})
 		return
 	}
 
@@ -61,19 +50,51 @@ func (h *TransferHandlers) Transfer(c *gin.Context) {
 		c.JSON(502, server_utils.ErrorResponse{Message: "auth client not configured"})
 		return
 	}
-	contact, err := h.AuthClient.GetInternalUserContact(c.Request.Context(), toWallet.UserID)
+	authz := strings.TrimSpace(c.GetHeader("Authorization"))
+	if authz == "" {
+		c.JSON(401, server_utils.ErrorResponse{Message: "authentication error"})
+		return
+	}
+	authCtx := server_utils.WithAuthBearer(c.Request.Context(), authz)
+
+	fromWallet, err := h.WalletRepo.GetByID(c.Request.Context(), fromWalletID)
+	if err != nil {
+		c.JSON(404, server_utils.ErrorResponse{Message: "source wallet not found"})
+		return
+	}
+
+	receiver, err := h.AuthClient.GetUserByPhone(authCtx, toPhone)
 	if err != nil {
 		var api *auth.APIError
 		if errors.As(err, &api) {
+			switch api.StatusCode {
+			case 401, 403:
+				c.JSON(401, server_utils.ErrorResponse{Message: "authentication error"})
+				return
+			case 404:
+				c.JSON(404, server_utils.ErrorResponse{Message: "receiver not found"})
+				return
+			}
 			c.JSON(502, server_utils.ErrorResponse{Message: err.Error()})
 			return
 		}
 		c.JSON(502, server_utils.ErrorResponse{Message: err.Error()})
 		return
 	}
-	receiverFullName := strings.TrimSpace(contact.Data.DisplayName)
+
+	toWallet, err := h.WalletRepo.GetByUserIDAndType(c.Request.Context(), receiver.Data.ID, fromWallet.WalletType)
+	if err != nil {
+		if repository.IsNotFound(err) {
+			c.JSON(404, server_utils.ErrorResponse{Message: "destination wallet not found"})
+			return
+		}
+		c.JSON(500, server_utils.ErrorResponse{Message: "internal error"})
+		return
+	}
+
+	receiverFullName := strings.TrimSpace(receiver.Data.DisplayName)
 	if receiverFullName == "" {
-		receiverFullName = strings.TrimSpace(contact.Data.Phone)
+		receiverFullName = strings.TrimSpace(receiver.Data.Phone)
 	}
 	if receiverFullName == "" {
 		c.JSON(502, server_utils.ErrorResponse{Message: "receiver display name not available from auth"})

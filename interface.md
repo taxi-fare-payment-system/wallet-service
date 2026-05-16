@@ -19,7 +19,7 @@ All paths are under the service base URL and use prefix **`/api/v1/wallet`**.
 | `PUT` | `/:wallet_id/topup` |
 | `POST` | `/finalize-topup` |
 | `PUT` | `/:wallet_id/pay-fare` |
-| `PUT` | `/:wallet_id/transfer` |
+| `POST` | `/:wallet_id/transfer` |
 | `PUT` | `/:wallet_id/withdraw` |
 | `PUT` | `/:wallet_id/freeze` |
 | `DELETE` | `/:wallet_id` |
@@ -286,17 +286,19 @@ Notes:
 
 ## Wallet transfer (P2P)
 
-### `PUT /api/v1/wallet/:wallet_id/transfer`
+### `POST /api/v1/wallet/:wallet_id/transfer`
 
-- **Description**: debits `:wallet_id` (source) and credits `to_wallet_id` (destination) atomically in the database, then records the movement via Payment Service `POST /api/v1/payments/transfers` inside the same transfer transaction (hook). Use for peer transfers where trip payment (`pay-fare`) does not apply.
-- **Receiver display name**: resolved server-side via Auth Service **`GET /internal/users/:id/contact`** (`:id` = destination wallet’s `user_id`), using `display_name` from the response; if empty, **`phone`** is used. See **`auth.md`** (Internal Endpoints). No `receiver_full_name` in the request body.
+- **Description**: debits `:wallet_id` (source) and credits the receiver’s wallet atomically in the database, then records the movement via Payment Service `POST /api/v1/payments/transfers` inside the same transfer transaction (hook). Use for peer transfers where trip payment (`pay-fare`) does not apply.
+- **Auth**: **`Authorization: Bearer …` required** (forwarded to Auth Service for receiver lookup).
+- **Receiver resolution**: Auth Service **`GET /api/v1/auth/users/by-phone?phone=…`** (`phone` = request `to_phone_number`; Ethiopian formats `09xxxxxxxx`, `07xxxxxxxx`, or `+2519/7xxxxxxxx`). The destination wallet is the receiver’s wallet with the **same `wallet_type`** as the source wallet (e.g. passenger → passenger).
+- **Receiver display name**: from Auth `display_name`; if empty, **`phone`** is used. No `receiver_full_name` in the request body.
 - **Path**: `:wallet_id` — source wallet UUID.
 - **Request (JSON)**:
 
 ```json
 {
   "amount": 25.5,
-  "to_wallet_id": "<destination-wallet-uuid>",
+  "to_phone_number": "0912345678",
   "message": "optional note"
 }
 ```
@@ -313,11 +315,13 @@ Notes:
 - **Errors** (non-exhaustive):
   - 400 `{ "message": "invalid json body" }`
   - 400 `{ "message": "amount must be > 0" }`
-  - 400 `{ "message": "invalid to_wallet_id" }`
+  - 400 `{ "message": "invalid to_phone_number" }`
+  - 401 `{ "message": "authentication error" }`
   - 404 `{ "message": "source wallet not found" }`
-  - 404 `{ "message": "destination wallet not found" }`
+  - 404 `{ "message": "receiver not found" }` (no Auth user for that phone)
+  - 404 `{ "message": "destination wallet not found" }` (user exists but has no wallet of the source type)
   - 502 `{ "message": "auth client not configured" }`
-  - 502 `{ "message": "<auth service error>" }` (including invalid user id / user not found in Auth)
+  - 502 `{ "message": "<auth service error>" }`
   - 502 `{ "message": "receiver display name not available from auth" }`
   - 400 other wallet-service / insufficient-balance / frozen-wallet errors from the underlying transfer logic
   - 502 Payment Service errors surfaced as `{ "message": "<payment service error>" }` where applicable
