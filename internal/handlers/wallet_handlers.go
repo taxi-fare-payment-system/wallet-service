@@ -47,7 +47,7 @@ func toWalletResponse(w models.Wallet) walletResponse {
 }
 
 func (h *WalletHandlers) GetWallet(c *gin.Context) {
-	idStr := c.Param("id")
+	idStr := c.Param("wallet_id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil || id <= 0 {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet id"})

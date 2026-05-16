@@ -44,7 +44,7 @@ func NewRouter(
 	})
 
 	// Wallet APIs
-	r.GET("/:id", walletHandlers.GetWallet)
+	r.GET("/:wallet_id", walletHandlers.GetWallet)
 	r.GET("/users/:userId", walletHandlers.GetWalletByUser)
 	r.POST("/", walletHandlers.CreateWallet)
 
@@ -61,11 +61,14 @@ func NewRouter(
 
 	// Withdraw, freeze, delete
 	r.PUT("/:wallet_id/withdraw", withdrawDeleteHandlers.Withdraw)
+	r.GET("/:wallet_id/withdrawals", withdrawDeleteHandlers.ListWithdrawals)
 	r.PUT("/:wallet_id/freeze", adminHandlers.FreezeWallet)
 	r.DELETE("/:wallet_id", withdrawDeleteHandlers.DeleteWallet)
 
-	// Admin: list wallets
+	// Admin: list wallets & configs
 	r.GET("/admin/wallets", adminHandlers.FindWallets)
+	r.GET("/admin/configs", adminHandlers.GetConfigs)
+	r.PUT("/admin/configs", adminHandlers.UpdateConfig)
 
 	return r
 }

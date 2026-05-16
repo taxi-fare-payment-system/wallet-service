@@ -15,6 +15,7 @@ import (
 
 type AdminHandlers struct {
 	WalletRepo *repository.WalletRepository
+	ConfigRepo *repository.ConfigRepository
 	AuthClient *auth.Client
 }
 
@@ -185,4 +186,45 @@ func (h *AdminHandlers) FindWallets(c *gin.Context) {
 		Sort:   sort,
 		Order:  order,
 	})
+}
+
+func (h *AdminHandlers) GetConfigs(c *gin.Context) {
+	if _, ok := h.requireAdmin(c); !ok {
+		return
+	}
+	if h.ConfigRepo == nil {
+		c.JSON(500, server_utils.ErrorResponse{Message: "config repository not configured"})
+		return
+	}
+	configs, err := h.ConfigRepo.GetAll(c.Request.Context())
+	if err != nil {
+		c.JSON(500, server_utils.ErrorResponse{Message: "failed to fetch configs"})
+		return
+	}
+	c.JSON(200, map[string]interface{}{"configs": configs})
+}
+
+type updateConfigRequest struct {
+	Key   string `json:"key" binding:"required"`
+	Value string `json:"value" binding:"required"`
+}
+
+func (h *AdminHandlers) UpdateConfig(c *gin.Context) {
+	if _, ok := h.requireAdmin(c); !ok {
+		return
+	}
+	var req updateConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, server_utils.ErrorResponse{Message: "invalid request body"})
+		return
+	}
+	if h.ConfigRepo == nil {
+		c.JSON(500, server_utils.ErrorResponse{Message: "config repository not configured"})
+		return
+	}
+	if err := h.ConfigRepo.Set(c.Request.Context(), req.Key, req.Value); err != nil {
+		c.JSON(500, server_utils.ErrorResponse{Message: "failed to update config"})
+		return
+	}
+	c.JSON(200, map[string]interface{}{"success": true, "key": req.Key, "value": req.Value})
 }

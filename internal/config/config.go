@@ -24,6 +24,9 @@ type Config struct {
 	DBMaxIdleConns int
 	DBConnMaxIdle  time.Duration
 	DBConnMaxLife  time.Duration
+
+	RabbitMQURL          string
+	NotificationExchange string
 }
 
 func Load() (Config, error) {
@@ -45,6 +48,8 @@ func Load() (Config, error) {
 		DBMaxIdleConns:        getenvIntDefault("DB_MAX_IDLE_CONNS", 25),
 		DBConnMaxIdle:         getenvDurationDefault("DB_CONN_MAX_IDLE", 5*time.Minute),
 		DBConnMaxLife:         getenvDurationDefault("DB_CONN_MAX_LIFE", 30*time.Minute),
+		RabbitMQURL:          os.Getenv("RABBITMQ_URL"),
+		NotificationExchange: getenvDefault("NOTIFICATION_EXCHANGE", "notification_exchange"),
 	}
 
 	return cfg, nil

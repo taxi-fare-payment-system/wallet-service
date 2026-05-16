@@ -1,10 +1,10 @@
 package handlers
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
-	"wallet_service/internal/models"
 	"wallet_service/internal/payment"
 	"wallet_service/internal/repository"
 	"wallet_service/internal/server_utils"
@@ -64,31 +64,10 @@ func (h *TransferHandlers) Transfer(c *gin.Context) {
 
 	// For P2P, both should ideally be passengers or owners, but let's keep it general
 	// as per service capability unless restricted.
-	
+
 	amountDec := decimal.NewFromFloat(req.Amount)
 
 	var transferOut payment.TransferResponse
-	hook := func(ctx gin.Context) error {
-		out, err := h.PaymentClient.Transfer(c.Request.Context(), payment.TransferRequest{
-			Amount:           req.Amount,
-			PayerUserID:      strconv.FormatInt(fromWallet.UserID, 10),
-			SenderWalletID:   strconv.FormatInt(fromWallet.ID, 10),
-			ReceiverWalletID: strconv.FormatInt(toWallet.ID, 10),
-			ReceiverID:       strconv.FormatInt(toWallet.UserID, 10),
-			ReceiverFullName: strings.TrimSpace(req.ReceiverFullName),
-			Message:          strings.TrimSpace(req.Message),
-			Reason:           "transfer",
-		})
-		if err != nil {
-			return err
-		}
-		transferOut = out
-		return nil
-	}
-
-	// Note: We need a slight modification to services.TransferHook to pass context correctly or use closure.
-	// But s.transferBalance handles the hook.
-
 	if err := h.WalletService.TransferBalanceWithHook(c.Request.Context(), fromWallet.ID, toWallet.ID, amountDec, func(ctx context.Context) error {
 		out, err := h.PaymentClient.Transfer(ctx, payment.TransferRequest{
 			Amount:           req.Amount,
@@ -98,8 +77,7 @@ func (h *TransferHandlers) Transfer(c *gin.Context) {
 			ReceiverID:       strconv.FormatInt(toWallet.UserID, 10),
 			ReceiverFullName: strings.TrimSpace(req.ReceiverFullName),
 			Message:          strings.TrimSpace(req.Message),
-			Reason:           "transfer",
-		});
+		})
 		if err != nil {
 			return err
 		}
@@ -113,5 +91,6 @@ func (h *TransferHandlers) Transfer(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"success":        true,
 		"transaction_id": transferOut.TransactionID,
+		"receipt_url":    transferOut.ReceiptURL,
 	})
 }

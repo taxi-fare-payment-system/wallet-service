@@ -2,10 +2,13 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"time"
 
 	"wallet_service/internal/models"
 	"wallet_service/internal/repository"
+	"wallet_service/internal/rabbitmq"
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -13,6 +16,7 @@ import (
 
 type WalletService struct {
 	WalletRepo *repository.WalletRepository
+	Pub        *rabbitmq.Publisher
 }
 
 type TransferHook func(ctx context.Context) error
@@ -89,6 +93,27 @@ func (s *WalletService) transferBalance(ctx context.Context, fromWalletID, toWal
 				return err
 			}
 		}
+
+		// Notify Sender
+		if s.Pub != nil {
+			s.Pub.SendNotification(ctx, rabbitmq.NotificationEvent{
+				UserID:   strconv.FormatInt(from.UserID, 10),
+				Type:     "transfer_sent",
+				Title:    "Payment Sent",
+				Content:  fmt.Sprintf("You have successfully sent %.2f ETB.", amount.InexactFloat64()),
+				Category: "wallet",
+			})
+
+			// Notify Receiver
+			s.Pub.SendNotification(ctx, rabbitmq.NotificationEvent{
+				UserID:   strconv.FormatInt(to.UserID, 10),
+				Type:     "transfer_received",
+				Title:    "Payment Received",
+				Content:  fmt.Sprintf("You have received %.2f ETB in your wallet.", amount.InexactFloat64()),
+				Category: "wallet",
+			})
+		}
+
 		return nil
 	})
 }
@@ -136,6 +161,17 @@ func (s *WalletService) ApplyTopupIdempotent(
 
 		w.Balance = w.Balance.Add(amount)
 		w.UpdatedAt = time.Now().UTC()
+
+		if s.Pub != nil {
+			s.Pub.SendNotification(ctx, rabbitmq.NotificationEvent{
+				UserID:   strconv.FormatInt(w.UserID, 10),
+				Type:     "topup_success",
+				Title:    "Top-up Successful",
+				Content:  fmt.Sprintf("Your wallet has been credited with %.2f ETB.", amount.InexactFloat64()),
+				Category: "wallet",
+			})
+		}
+
 		return tx.Save(&w).Error
 	})
 }

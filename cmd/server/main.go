@@ -20,6 +20,7 @@ import (
 	"wallet_service/internal/server"
 	"wallet_service/internal/services"
 	"wallet_service/internal/trip"
+	"wallet_service/internal/rabbitmq"
 )
 
 func main() {
@@ -41,8 +42,21 @@ func main() {
 	defer database.SQL.Close()
 
 	walletRepo := repository.NewWalletRepository(database.Gorm)
+
+	var publisher *rabbitmq.Publisher
+	if cfg.RabbitMQURL != "" {
+		p, err := rabbitmq.NewPublisher(cfg.RabbitMQURL, cfg.NotificationExchange)
+		if err != nil {
+			logger.Error("rabbitmq_publisher_init_failed", slog.Any("error", err))
+		} else {
+			publisher = p
+			logger.Info("rabbitmq_publisher_initialized")
+			defer publisher.Close()
+		}
+	}
+
 	walletHandlers := &handlers.WalletHandlers{WalletRepo: walletRepo}
-	walletService := &services.WalletService{WalletRepo: walletRepo}
+	walletService := &services.WalletService{WalletRepo: walletRepo, Pub: publisher}
 
 	httpClient := &http.Client{Timeout: cfg.HTTPClientTimeout}
 	paymentClient, err := payment.NewClient(cfg.PaymentServiceBaseURL, httpClient)
@@ -82,8 +96,19 @@ func main() {
 		}
 		authClient = ac
 	}
-	adminHandlers := &handlers.AdminHandlers{WalletRepo: walletRepo, AuthClient: authClient}
-	withdrawDeleteHandlers := &handlers.WithdrawDeleteHandlers{WalletRepo: walletRepo}
+	configRepo := repository.NewConfigRepository(database.Gorm)
+	adminHandlers := &handlers.AdminHandlers{
+		WalletRepo: walletRepo, 
+		ConfigRepo: configRepo,
+		AuthClient: authClient,
+	}
+	
+	withdrawalRepo := repository.NewWithdrawalRepository(database.Gorm)
+	withdrawDeleteHandlers := &handlers.WithdrawDeleteHandlers{
+		WalletRepo:     walletRepo,
+		WithdrawalRepo: withdrawalRepo,
+		ConfigRepo:     configRepo,
+	}
 	transferHandlers := &handlers.TransferHandlers{
 		WalletRepo:    walletRepo,
 		WalletService: walletService,
