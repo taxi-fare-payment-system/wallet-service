@@ -3,6 +3,7 @@ package models
 import (
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
@@ -15,8 +16,8 @@ const (
 )
 
 type Withdrawal struct {
-	ID             int64            `json:"id" gorm:"primaryKey;autoIncrement"`
-	WalletID       int64            `json:"wallet_id" gorm:"not null;index"`
+	ID             uuid.UUID        `json:"id" gorm:"type:uuid;primaryKey"`
+	WalletID       uuid.UUID        `json:"wallet_id" gorm:"type:uuid;not null;index"`
 	Amount         decimal.Decimal  `json:"amount" gorm:"type:numeric(12,2);not null"`
 	Fee            decimal.Decimal  `json:"fee" gorm:"type:numeric(12,2);not null;default:0"`
 	NetAmount      decimal.Decimal  `json:"net_amount" gorm:"type:numeric(12,2);not null"`

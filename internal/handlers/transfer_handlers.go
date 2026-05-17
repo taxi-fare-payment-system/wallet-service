@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 
 	"wallet_service/internal/auth"

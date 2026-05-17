@@ -21,7 +21,6 @@ import (
 	"wallet_service/internal/server"
 	"wallet_service/internal/services"
 	"wallet_service/internal/trip"
-	"wallet_service/internal/rabbitmq"
 )
 
 func main() {

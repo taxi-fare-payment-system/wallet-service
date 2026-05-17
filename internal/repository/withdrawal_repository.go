@@ -5,6 +5,7 @@ import (
 
 	"wallet_service/internal/models"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -28,7 +29,7 @@ func (r *WithdrawalRepository) Create(ctx context.Context, tx *gorm.DB, w *model
 	return conn.WithContext(ctx).Create(w).Error
 }
 
-func (r *WithdrawalRepository) ListByWalletID(ctx context.Context, walletID int64, limit, offset int) ([]models.Withdrawal, error) {
+func (r *WithdrawalRepository) ListByWalletID(ctx context.Context, walletID uuid.UUID, limit, offset int) ([]models.Withdrawal, error) {
 	var withdrawals []models.Withdrawal
 	q := r.db.WithContext(ctx).Where("wallet_id = ?", walletID).Order("created_at DESC")
 	if limit > 0 {
@@ -41,13 +42,13 @@ func (r *WithdrawalRepository) ListByWalletID(ctx context.Context, walletID int6
 	return withdrawals, err
 }
 
-func (r *WithdrawalRepository) GetByID(ctx context.Context, id int64) (models.Withdrawal, error) {
+func (r *WithdrawalRepository) GetByID(ctx context.Context, id uuid.UUID) (models.Withdrawal, error) {
 	var w models.Withdrawal
-	err := r.db.WithContext(ctx).First(&w, id).Error
+	err := r.db.WithContext(ctx).First(&w, "id = ?", id).Error
 	return w, err
 }
 
-func (r *WithdrawalRepository) UpdateStatus(ctx context.Context, id int64, status models.WithdrawalStatus, txRef *string) error {
+func (r *WithdrawalRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status models.WithdrawalStatus, txRef *string) error {
 	updates := map[string]interface{}{
 		"status": status,
 	}
@@ -57,7 +58,7 @@ func (r *WithdrawalRepository) UpdateStatus(ctx context.Context, id int64, statu
 	return r.db.WithContext(ctx).Model(&models.Withdrawal{}).Where("id = ?", id).Updates(updates).Error
 }
 
-func (r *WithdrawalRepository) GetTotalWithdrawnToday(ctx context.Context, walletID int64) (float64, error) {
+func (r *WithdrawalRepository) GetTotalWithdrawnToday(ctx context.Context, walletID uuid.UUID) (float64, error) {
 	var total float64
 	err := r.db.WithContext(ctx).
 		Model(&models.Withdrawal{}).

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 
 	"wallet_service/internal/messaging"
@@ -146,21 +147,23 @@ func (h *WithdrawDeleteHandlers) Withdraw(c *gin.Context) {
 		}
 		// Check withdrawal limits
 		status := models.WithdrawalStatusCompleted
+		wltUUID, _ := uuid.Parse(wlt.ID)
 		if h.ConfigRepo != nil && h.WithdrawalRepo != nil {
 			limitStr, _ := h.ConfigRepo.Get(c.Request.Context(), "daily_withdrawal_limit")
 			thresholdStr, _ := h.ConfigRepo.Get(c.Request.Context(), "auto_approve_threshold")
-			
+
 			if limitStr != "" {
-				limit, _ := strconv.ParseFloat(limitStr, 64)
-				totalToday, _ := h.WithdrawalRepo.GetTotalWithdrawnToday(c.Request.Context(), wlt.ID)
-				if totalToday+req.Amount > limit {
+				limit, _ := decimal.NewFromString(limitStr)
+				totalToday, _ := h.WithdrawalRepo.GetTotalWithdrawnToday(c.Request.Context(), wltUUID)
+				totalTodayDec := decimal.NewFromFloat(totalToday)
+				if totalTodayDec.Add(decimal.NewFromFloat(req.Amount)).GreaterThan(limit) {
 					return errors.New("daily withdrawal limit exceeded")
 				}
 			}
 
 			if thresholdStr != "" {
-				threshold, _ := strconv.ParseFloat(thresholdStr, 64)
-				if req.Amount > threshold {
+				threshold, _ := decimal.NewFromString(thresholdStr)
+				if decimal.NewFromFloat(req.Amount).GreaterThan(threshold) {
 					status = models.WithdrawalStatusPending
 				}
 			}
@@ -175,7 +178,7 @@ func (h *WithdrawDeleteHandlers) Withdraw(c *gin.Context) {
 		netAmount := amt.Sub(fee)
 
 		withdrawal := models.Withdrawal{
-			WalletID:  wlt.ID,
+			WalletID:  wltUUID,
 			Amount:    amt,
 			Fee:       fee,
 			NetAmount: netAmount,
@@ -332,9 +335,9 @@ func (h *WithdrawDeleteHandlers) DeleteWallet(c *gin.Context) {
 }
 
 func (h *WithdrawDeleteHandlers) ListWithdrawals(c *gin.Context) {
-	walletIDStr := c.Param("wallet_id")
-	walletID, err := strconv.ParseInt(walletIDStr, 10, 64)
-	if err != nil || walletID <= 0 {
+	walletIDStr := strings.TrimSpace(c.Param("wallet_id"))
+	walletUUID, err := uuid.Parse(walletIDStr)
+	if err != nil {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet id"})
 		return
 	}
@@ -357,7 +360,7 @@ func (h *WithdrawDeleteHandlers) ListWithdrawals(c *gin.Context) {
 		return
 	}
 
-	withdrawals, err := h.WithdrawalRepo.ListByWalletID(c.Request.Context(), walletID, limit, offset)
+	withdrawals, err := h.WithdrawalRepo.ListByWalletID(c.Request.Context(), walletUUID, limit, offset)
 	if err != nil {
 		c.JSON(500, server_utils.ErrorResponse{Message: "failed to list withdrawals"})
 		return
