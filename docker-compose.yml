@@ -24,9 +24,9 @@ services:
         required: false
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-root_postgres}@postgres:5432/${POSTGRES_DB:-fare_wallet_service}?sslmode=disable
-      AUTH_SERVICE_BASE_URL: ${AUTH_SERVICE_BASE_URL:-http://auth:8082}
+      AUTH_SERVICE_BASE_URL: ${AUTH_SERVICE_BASE_URL:-http://auth-service:8088}
       PAYMENT_SERVICE_BASE_URL: ${PAYMENT_SERVICE_BASE_URL:-http://payment:8085}
-      PORT: ${PORT:-8088}
+      PORT: ${PORT:-8081}
       ENV: ${ENV:-local}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       MIGRATIONS_PATH: ${MIGRATIONS_PATH:-file://migrations}
