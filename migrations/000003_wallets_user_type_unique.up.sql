@@ -1,11 +1,16 @@
 BEGIN;
 
-ALTER TABLE wallets
+ALTER TABLE IF EXISTS wallets
   DROP CONSTRAINT IF EXISTS wallets_user_id_unique;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (
+  IF EXISTS (
+    SELECT 1
+    FROM pg_tables
+    WHERE schemaname = 'public'
+      AND tablename = 'wallets'
+  ) AND NOT EXISTS (
     SELECT 1
     FROM pg_indexes
     WHERE schemaname = 'public'

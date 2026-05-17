@@ -2,36 +2,42 @@ package handlers
 
 import (
 	"errors"
-	"strconv"
 	"strings"
 	"time"
 
+	"wallet_service/internal/messaging"
 	"wallet_service/internal/models"
 	"wallet_service/internal/repository"
 	"wallet_service/internal/server_utils"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 )
 
 type WalletHandlers struct {
 	WalletRepo *repository.WalletRepository
+	Bus        *messaging.Publisher
 }
 
 type createWalletRequest struct {
-	UserID int64  `json:"user_id"`
+	UserID string `json:"user_id"`
 	Type   string `json:"type"`
 }
 
 type walletResponse struct {
-	ID         int64             `json:"id"`
-	UserID     int64             `json:"user_id"`
+	ID         string            `json:"id"`
+	UserID     string            `json:"user_id"`
 	WalletType models.WalletType `json:"wallet_type"`
 	Freezed    bool              `json:"freezed"`
 	Balance    decimal.Decimal   `json:"balance"`
 	CreatedAt  string            `json:"created_at"`
 	UpdatedAt  string            `json:"updated_at"`
+}
+
+type walletIDOnlyResponse struct {
+	WalletID string `json:"wallet_id"`
 }
 
 func toWalletResponse(w models.Wallet) walletResponse {
@@ -47,9 +53,8 @@ func toWalletResponse(w models.Wallet) walletResponse {
 }
 
 func (h *WalletHandlers) GetWallet(c *gin.Context) {
-	idStr := c.Param("wallet_id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id := strings.TrimSpace(c.Param("id"))
+	if _, err := uuid.Parse(id); err != nil {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet id"})
 		return
 	}
@@ -68,9 +73,8 @@ func (h *WalletHandlers) GetWallet(c *gin.Context) {
 }
 
 func (h *WalletHandlers) GetWalletByUser(c *gin.Context) {
-	userIDStr := c.Param("userId")
-	userID, err := strconv.ParseInt(userIDStr, 10, 64)
-	if err != nil || userID <= 0 {
+	userID := strings.TrimSpace(c.Param("userId"))
+	if userID == "" {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid user id"})
 		return
 	}
@@ -98,7 +102,22 @@ func (h *WalletHandlers) GetWalletByUser(c *gin.Context) {
 		return
 	}
 
-	c.JSON(200, toWalletResponse(wallet))
+	callerID, hasCaller := server_utils.ParseXUserID(c)
+	role := strings.ToLower(server_utils.XUserRole(c))
+	if hasCaller && callerID == userID {
+		c.JSON(200, toWalletResponse(wallet))
+		return
+	}
+	if server_utils.IsPlatformAdminRole(role) {
+		c.JSON(200, toWalletResponse(wallet))
+		return
+	}
+	if role == "passenger" && walletType == models.WalletTypeDriver {
+		c.JSON(200, walletIDOnlyResponse{WalletID: wallet.ID})
+		return
+	}
+
+	c.JSON(403, server_utils.ErrorResponse{Message: "forbidden"})
 }
 
 func (h *WalletHandlers) CreateWallet(c *gin.Context) {
@@ -115,7 +134,8 @@ func (h *WalletHandlers) CreateWallet(c *gin.Context) {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet type"})
 		return
 	}
-	if req.UserID <= 0 {
+	req.UserID = strings.TrimSpace(req.UserID)
+	if req.UserID == "" {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid user id"})
 		return
 	}
@@ -135,6 +155,13 @@ func (h *WalletHandlers) CreateWallet(c *gin.Context) {
 		c.JSON(500, server_utils.ErrorResponse{Message: "internal error"})
 		return
 	}
+
+	_ = h.Bus.PublishAnalytics(c.Request.Context(), "analytics.wallet.created", map[string]any{
+		"wallet_id":   newWallet.ID,
+		"user_id":     newWallet.UserID,
+		"wallet_type": string(newWallet.WalletType),
+		"balance":     0,
+	})
 
 	c.JSON(201, toWalletResponse(newWallet))
 }

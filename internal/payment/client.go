@@ -47,12 +47,27 @@ func (e *APIError) Error() string {
 }
 
 func (c *Client) newURL(p string) string {
+	pathPart, rawQuery, _ := strings.Cut(p, "?")
+	u := *c.baseURL
+	u.Path = path.Join(strings.TrimRight(u.Path, "/"), pathPart)
+	u.RawQuery = rawQuery
+	return u.String()
+}
+
+func (c *Client) newURLWithQuery(p string, query url.Values) string {
 	u := *c.baseURL
 	u.Path = path.Join(strings.TrimRight(u.Path, "/"), p)
+	if len(query) > 0 {
+		u.RawQuery = query.Encode()
+	}
 	return u.String()
 }
 
 func (c *Client) doJSON(ctx context.Context, method, p string, in any, out any) (*http.Response, error) {
+	return c.doJSONQuery(ctx, method, p, nil, in, out)
+}
+
+func (c *Client) doJSONQuery(ctx context.Context, method, p string, query url.Values, in any, out any) (*http.Response, error) {
 	var body io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
@@ -61,13 +76,22 @@ func (c *Client) doJSON(ctx context.Context, method, p string, in any, out any) 
 		}
 		body = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.newURL(p), body)
+	req, err := http.NewRequestWithContext(ctx, method, c.newURLWithQuery(p, query), body)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	if rid := server_utils.RequestIDFromContext(ctx); rid != "" {
 		req.Header.Set("X-Request-ID", rid)
+	}
+	if uid := server_utils.TrustUserIDFromContext(ctx); uid != "" {
+		req.Header.Set("X-User-ID", uid)
+	}
+	if role := server_utils.TrustUserRoleFromContext(ctx); role != "" {
+		req.Header.Set("X-User-Role", role)
+	}
+	if auth := server_utils.AuthBearerFromContext(ctx); auth != "" {
+		req.Header.Set("Authorization", auth)
 	}
 
 	resp, err := c.httpClient.Do(req)

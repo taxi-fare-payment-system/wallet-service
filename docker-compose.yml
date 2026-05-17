@@ -1,14 +1,15 @@
 services:
-  wallet-db:
+  postgres:
+    profiles: ["standalone"]
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: root_postgres
-      POSTGRES_DB: fare_wallet_service
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-root_postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-fare_wallet_service}
     ports:
-      - "5440:5432"
+      - "${POSTGRES_HOST_PORT:-5440}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d fare_wallet_service"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-fare_wallet_service}"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -18,19 +19,29 @@ services:
     depends_on:
       wallet-db:
         condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
     environment:
-      DATABASE_URL: postgres://postgres:root_postgres@wallet-db:5432/fare_wallet_service?sslmode=disable
-      PORT: "8081"
-      LOG_LEVEL: info
-      MIGRATIONS_PATH: file://migrations
-      PAYMENT_SERVICE_BASE_URL: http://payment-service-payment-app-1:8080
-      HTTP_CLIENT_TIMEOUT: 10s
-      TRIP_SERVICE_BASE_URL: ""
-      AUTH_SERVICE_BASE_URL: ""
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq_notification:5672/
-      NOTIFICATION_EXCHANGE: notification_exchange
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-root_postgres}@postgres:5432/${POSTGRES_DB:-fare_wallet_service}?sslmode=disable
+      AUTH_SERVICE_BASE_URL: ${AUTH_SERVICE_BASE_URL:-http://auth:8082}
+      PAYMENT_SERVICE_BASE_URL: ${PAYMENT_SERVICE_BASE_URL:-http://payment:8085}
+      PORT: ${PORT:-8088}
+      ENV: ${ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      MIGRATIONS_PATH: ${MIGRATIONS_PATH:-file://migrations}
+      HTTP_CLIENT_TIMEOUT: ${HTTP_CLIENT_TIMEOUT:-10s}
+      TRIP_SERVICE_BASE_URL: ${TRIP_SERVICE_BASE_URL:-http://trip:8086}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq_notification:5672/}
+      ANALYTICS_EXCHANGE: ${ANALYTICS_EXCHANGE:-analytics_exchange}
+      NOTIFICATION_EXCHANGE: ${NOTIFICATION_EXCHANGE:-notification.exchange}
+      DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-25}
+      DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-25}
+      DB_CONN_MAX_IDLE: ${DB_CONN_MAX_IDLE:-5m}
+      DB_CONN_MAX_LIFE: ${DB_CONN_MAX_LIFE:-30m}
+      JWT_SECRET: ${JWT_SECRET:-gringo}
     ports:
-      - "8081:8081"
+      - "${PORT:-8088}:${PORT:-8088}"
     command: ["/bin/sh", "-lc", "/app/wallet-migrate up && /app/wallet-server"]
 
   # Optional: run payment service separately and point PAYMENT_SERVICE_BASE_URL to it.

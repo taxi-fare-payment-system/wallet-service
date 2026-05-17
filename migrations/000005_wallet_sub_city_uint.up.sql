@@ -1,0 +1,4 @@
+ALTER TABLE IF EXISTS wallets
+    DROP COLUMN IF EXISTS sub_city_id,
+    ADD COLUMN IF NOT EXISTS sub_city_id BIGINT NULL;
+

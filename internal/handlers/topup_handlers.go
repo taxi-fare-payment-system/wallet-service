@@ -1,9 +1,10 @@
 package handlers
 
 import (
-	"strconv"
 	"strings"
 
+	"wallet_service/internal/auth"
+	"wallet_service/internal/messaging"
 	"wallet_service/internal/models"
 	"wallet_service/internal/payment"
 	"wallet_service/internal/repository"
@@ -11,20 +12,21 @@ import (
 	"wallet_service/internal/services"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
 type TopupHandlers struct {
 	WalletRepo    *repository.WalletRepository
 	WalletService *services.WalletService
+	AuthClient    *auth.Client
 	PaymentClient *payment.Client
+	Bus           *messaging.Publisher
 }
 
 type topupRequest struct {
 	Amount      float64 `json:"amount"`
-	PhoneNumber string  `json:"phone_number"`
-	FirstName   string  `json:"first_name"`
-	LastName    string  `json:"last_name"`
+	PhoneNumber string  `json:"phone_number,omitempty"`
 	Email       string  `json:"email,omitempty"`
 	Message     string  `json:"message,omitempty"`
 }
@@ -35,9 +37,8 @@ type topupResponse struct {
 }
 
 func (h *TopupHandlers) TopupWallet(c *gin.Context) {
-	walletIDStr := c.Param("wallet_id")
-	walletID, err := strconv.ParseInt(walletIDStr, 10, 64)
-	if err != nil || walletID <= 0 {
+	walletID := strings.TrimSpace(c.Param("wallet_id"))
+	if _, err := uuid.Parse(walletID); err != nil {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet id"})
 		return
 	}
@@ -51,8 +52,32 @@ func (h *TopupHandlers) TopupWallet(c *gin.Context) {
 		c.JSON(400, server_utils.ErrorResponse{Message: "amount must be > 0"})
 		return
 	}
-	if strings.TrimSpace(req.PhoneNumber) == "" || strings.TrimSpace(req.FirstName) == "" || strings.TrimSpace(req.LastName) == "" {
-		c.JSON(400, server_utils.ErrorResponse{Message: "phone_number, first_name, and last_name are required"})
+	if h.AuthClient == nil {
+		c.JSON(401, server_utils.ErrorResponse{Message: "authentication error"})
+		return
+	}
+	authz := strings.TrimSpace(c.GetHeader("Authorization"))
+	if authz == "" {
+		c.JSON(401, server_utils.ErrorResponse{Message: "authentication error"})
+		return
+	}
+	authCtx := server_utils.WithAuthBearer(c.Request.Context(), authz)
+	me, err := h.AuthClient.GetMe(authCtx)
+	if err != nil {
+		c.JSON(401, server_utils.ErrorResponse{Message: "authentication error"})
+		return
+	}
+	firstName, lastName := splitDisplayName(me.Data.DisplayName)
+	if firstName == "" || lastName == "" {
+		c.JSON(401, server_utils.ErrorResponse{Message: "authentication error"})
+		return
+	}
+	phone := strings.TrimSpace(req.PhoneNumber)
+	if phone == "" {
+		phone = strings.TrimSpace(me.Data.Phone)
+	}
+	if phone == "" {
+		c.JSON(401, server_utils.ErrorResponse{Message: "authentication error"})
 		return
 	}
 
@@ -77,11 +102,11 @@ func (h *TopupHandlers) TopupWallet(c *gin.Context) {
 	pReq := payment.InitiateRequest{
 		Amount:         req.Amount,
 		Reason:         "wallet topup",
-		PayerUserID:    strconv.FormatInt(wallet.UserID, 10),
-		SenderWalletID: strconv.FormatInt(wallet.ID, 10),
-		PhoneNumber:    strings.TrimSpace(req.PhoneNumber),
-		FirstName:      strings.TrimSpace(req.FirstName),
-		LastName:       strings.TrimSpace(req.LastName),
+		PayerUserID:    wallet.UserID,
+		SenderWalletID: wallet.ID,
+		PhoneNumber:    phone,
+		FirstName:      firstName,
+		LastName:       lastName,
 		Email:          strings.TrimSpace(req.Email),
 		Message:        strings.TrimSpace(req.Message),
 		ReceiverID:     "",
@@ -100,6 +125,17 @@ func (h *TopupHandlers) TopupWallet(c *gin.Context) {
 	})
 }
 
+func splitDisplayName(displayName string) (string, string) {
+	parts := strings.Fields(strings.TrimSpace(displayName))
+	if len(parts) == 0 {
+		return "", ""
+	}
+	if len(parts) == 1 {
+		return parts[0], parts[0]
+	}
+	return parts[0], strings.Join(parts[1:], " ")
+}
+
 type finalizeTopupRequest struct {
 	TransactionID    string `json:"transaction_id"`
 	TxRef            string `json:"tx_ref"`
@@ -108,6 +144,7 @@ type finalizeTopupRequest struct {
 	ReceiverWalletID string `json:"receiver_wallet_id"`
 	Amount           string `json:"amount"`
 	Currency         string `json:"currency"`
+	PhoneNumber      string `json:"phone_number"`
 }
 
 type finalizeTopupResponse struct {
@@ -126,8 +163,8 @@ func (h *TopupHandlers) FinalizeTopup(c *gin.Context) {
 		return
 	}
 
-	walletID, err := strconv.ParseInt(req.ReceiverWalletID, 10, 64)
-	if err != nil || walletID <= 0 {
+	walletID := strings.TrimSpace(req.ReceiverWalletID)
+	if _, err := uuid.Parse(walletID); err != nil {
 		c.JSON(400, finalizeTopupResponse{Received: false})
 		return
 	}
@@ -153,7 +190,7 @@ func (h *TopupHandlers) FinalizeTopup(c *gin.Context) {
 		chapaPtr = &chapaRef
 	}
 
-	if err := h.WalletService.ApplyTopupIdempotent(
+	applied, newBal, err := h.WalletService.ApplyTopupIdempotent(
 		c.Request.Context(),
 		strings.TrimSpace(req.TransactionID),
 		walletID,
@@ -161,10 +198,42 @@ func (h *TopupHandlers) FinalizeTopup(c *gin.Context) {
 		currency,
 		txRefPtr,
 		chapaPtr,
-	); err != nil {
-		// Payment service expects 400/401/500 style responses; here we only distinguish invalid input vs server error.
+	)
+	if err != nil {
 		c.JSON(500, finalizeTopupResponse{Received: false})
 		return
+	}
+
+	if applied {
+		txID := strings.TrimSpace(req.TransactionID)
+		_ = h.Bus.PublishAnalytics(c.Request.Context(), "analytics.wallet.balance_updated", map[string]any{
+			"wallet_id": walletID,
+			"balance":   newBal.StringFixed(2),
+			"delta":     amt.StringFixed(2),
+			"reason":    "topup",
+		})
+		payer := strings.TrimSpace(req.PayerUserID)
+		if payer == "" {
+			payer = "unknown"
+		}
+		amtStr := amt.StringFixed(2)
+		_ = h.Bus.PublishNotification(c.Request.Context(), "notification.wallet.topup_succeeded", map[string]any{
+			"event_id":  uuid.NewString(),
+			"user_id":   payer,
+			"user_role": "passenger",
+			"type":      "topup_success",
+			"title":     "Wallet Topped Up",
+			"content":   "Your wallet has been credited " + amtStr + " ETB.",
+			"priority":  "normal",
+			"category":  "billing",
+			"channels":  []string{"sms", "push"},
+			"metadata": map[string]any{
+				"amount":         amtStr,
+				"currency":       currency,
+				"phone":          strings.TrimSpace(req.PhoneNumber),
+				"transaction_id": txID,
+			},
+		})
 	}
 
 	c.JSON(200, finalizeTopupResponse{Received: true})

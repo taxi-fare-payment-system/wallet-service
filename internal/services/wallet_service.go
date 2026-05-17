@@ -3,12 +3,11 @@ package services
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 
+	"wallet_service/internal/messaging"
 	"wallet_service/internal/models"
 	"wallet_service/internal/repository"
-	"wallet_service/internal/rabbitmq"
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -16,7 +15,7 @@ import (
 
 type WalletService struct {
 	WalletRepo *repository.WalletRepository
-	Pub        *rabbitmq.Publisher
+	Bus        *messaging.Publisher
 }
 
 type TransferHook func(ctx context.Context) error
@@ -27,17 +26,17 @@ type TransferHook func(ctx context.Context) error
 // - both wallets exist
 // - both wallets are not frozen
 // - from wallet remains non-negative
-func (s *WalletService) TransferBalance(ctx context.Context, fromWalletID, toWalletID int64, amount decimal.Decimal) error {
+func (s *WalletService) TransferBalance(ctx context.Context, fromWalletID, toWalletID string, amount decimal.Decimal) error {
 	return s.transferBalance(ctx, fromWalletID, toWalletID, amount, nil)
 }
 
 // TransferBalanceWithHook performs the same atomic transfer as TransferBalance, but runs hook
 // after balances are updated and before the DB transaction commits.
-func (s *WalletService) TransferBalanceWithHook(ctx context.Context, fromWalletID, toWalletID int64, amount decimal.Decimal, hook TransferHook) error {
+func (s *WalletService) TransferBalanceWithHook(ctx context.Context, fromWalletID, toWalletID string, amount decimal.Decimal, hook TransferHook) error {
 	return s.transferBalance(ctx, fromWalletID, toWalletID, amount, hook)
 }
 
-func (s *WalletService) transferBalance(ctx context.Context, fromWalletID, toWalletID int64, amount decimal.Decimal, hook TransferHook) error {
+func (s *WalletService) transferBalance(ctx context.Context, fromWalletID, toWalletID string, amount decimal.Decimal, hook TransferHook) error {
 	if amount.Cmp(decimal.Zero) <= 0 {
 		return ErrInvalidAmount
 	}
@@ -95,22 +94,22 @@ func (s *WalletService) transferBalance(ctx context.Context, fromWalletID, toWal
 		}
 
 		// Notify Sender
-		if s.Pub != nil {
-			s.Pub.SendNotification(ctx, rabbitmq.NotificationEvent{
-				UserID:   strconv.FormatInt(from.UserID, 10),
-				Type:     "transfer_sent",
-				Title:    "Payment Sent",
-				Content:  fmt.Sprintf("You have successfully sent %.2f ETB.", amount.InexactFloat64()),
-				Category: "wallet",
+		if s.Bus != nil {
+			_ = s.Bus.PublishNotification(ctx, "notification.wallet.transfer_sent", map[string]any{
+				"user_id":  fmt.Sprintf("%v", from.UserID),
+				"type":     "transfer_sent",
+				"title":    "Payment Sent",
+				"content":  fmt.Sprintf("You have successfully sent %.2f ETB.", amount.InexactFloat64()),
+				"category": "wallet",
 			})
 
 			// Notify Receiver
-			s.Pub.SendNotification(ctx, rabbitmq.NotificationEvent{
-				UserID:   strconv.FormatInt(to.UserID, 10),
-				Type:     "transfer_received",
-				Title:    "Payment Received",
-				Content:  fmt.Sprintf("You have received %.2f ETB in your wallet.", amount.InexactFloat64()),
-				Category: "wallet",
+			_ = s.Bus.PublishNotification(ctx, "notification.wallet.transfer_received", map[string]any{
+				"user_id":  fmt.Sprintf("%v", to.UserID),
+				"type":     "transfer_received",
+				"title":    "Payment Received",
+				"content":  fmt.Sprintf("You have received %.2f ETB in your wallet.", amount.InexactFloat64()),
+				"category": "wallet",
 			})
 		}
 
@@ -119,22 +118,24 @@ func (s *WalletService) transferBalance(ctx context.Context, fromWalletID, toWal
 }
 
 // ApplyTopupIdempotent credits a wallet exactly once for a given payment service transaction id.
-// If the transaction was already applied, it returns nil without changing the wallet balance.
+// If the transaction was already applied, applied is false and newBalance is the current balance.
 func (s *WalletService) ApplyTopupIdempotent(
 	ctx context.Context,
 	paymentTransactionID string,
-	walletID int64,
+	walletID string,
 	amount decimal.Decimal,
 	currency string,
 	txRef *string,
 	chapaReference *string,
-) error {
+) (applied bool, newBalance decimal.Decimal, err error) {
 	if amount.Cmp(decimal.Zero) <= 0 {
-		return ErrInvalidAmount
+		return false, decimal.Zero, ErrInvalidAmount
 	}
 
 	db := s.WalletRepo.DB()
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var outApplied bool
+	var outBal decimal.Decimal
+	txErr := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		w, err := s.WalletRepo.LockByID(ctx, tx, walletID)
 		if err != nil {
 			return err
@@ -156,22 +157,29 @@ func (s *WalletService) ApplyTopupIdempotent(
 			return err
 		}
 		if !created {
+			outApplied = false
+			outBal = w.Balance
 			return nil
 		}
 
 		w.Balance = w.Balance.Add(amount)
 		w.UpdatedAt = time.Now().UTC()
-
-		if s.Pub != nil {
-			s.Pub.SendNotification(ctx, rabbitmq.NotificationEvent{
-				UserID:   strconv.FormatInt(w.UserID, 10),
-				Type:     "topup_success",
-				Title:    "Top-up Successful",
-				Content:  fmt.Sprintf("Your wallet has been credited with %.2f ETB.", amount.InexactFloat64()),
-				Category: "wallet",
+		if s.Bus != nil {
+			_ = s.Bus.PublishNotification(ctx, "notification.wallet.topup_success", map[string]any{
+				"user_id":  fmt.Sprintf("%v", w.UserID),
+				"type":     "topup_success",
+				"title":    "Top-up Successful",
+				"content":  fmt.Sprintf("Your wallet has been credited with %.2f ETB.", amount.InexactFloat64()),
+				"category": "wallet",
 			})
 		}
 
-		return tx.Save(&w).Error
+		if err := tx.Save(&w).Error; err != nil {
+			return err
+		}
+		outApplied = true
+		outBal = w.Balance
+		return nil
 	})
+	return outApplied, outBal, txErr
 }

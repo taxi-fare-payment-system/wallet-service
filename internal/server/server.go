@@ -23,6 +23,7 @@ func NewRouter(
 	transactionsHandlers *handlers.TransactionsHandlers,
 	adminHandlers *handlers.AdminHandlers,
 	withdrawDeleteHandlers *handlers.WithdrawDeleteHandlers,
+	assistantHandlers *handlers.AssistantHandlers,
 	transferHandlers *handlers.TransferHandlers,
 ) *gin.Engine {
 	r := gin.New()
@@ -30,10 +31,12 @@ func NewRouter(
 	r.Use(GinRequestIDMiddleware())
 	r.Use(GinAccessLogMiddleware(logger))
 
-	r.GET("/healthz", func(c *gin.Context) {
+	base := "/api/v1/wallet"
+
+	r.GET(base+"/healthz", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
-	r.GET("/readyz", func(c *gin.Context) {
+	r.GET(base+"/readyz", func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 		defer cancel()
 		if err := sqlDB.PingContext(ctx); err != nil {
@@ -43,32 +46,30 @@ func NewRouter(
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	// Wallet APIs
-	r.GET("/:wallet_id", walletHandlers.GetWallet)
-	r.GET("/users/:userId", walletHandlers.GetWalletByUser)
-	r.POST("/", walletHandlers.CreateWallet)
+	r.GET(base+"/banks/chapa", withdrawDeleteHandlers.ListChapaBanks)
+	r.GET(base+"/assistant/:assistantId/earnings", assistantHandlers.ListEarnings)
+	r.GET(base+"/transactions", transactionsHandlers.ListTransactions)
 
-	// Top-up flow + finalize callback
-	r.PUT("/:wallet_id/topup", topupHandlers.TopupWallet)
-	r.POST("/v1/wallet/finalize-topup", topupHandlers.FinalizeTopup)
+	r.POST(base, walletHandlers.CreateWallet)
+	r.GET(base+"/users/:userId", walletHandlers.GetWalletByUser)
+	r.GET(base+"/:id", walletHandlers.GetWallet)
 
-	// Pay fare & Transfer
-	r.PUT("/:wallet_id/pay-fare", payFareHandlers.PayFare)
-	r.POST("/:wallet_id/transfer", transferHandlers.Transfer)
+	r.PUT(base+"/:wallet_id/topup", topupHandlers.TopupWallet)
+	r.POST(base+"/finalize-topup", topupHandlers.FinalizeTopup)
 
-	// Transaction history proxy
-	r.GET("/transactions", transactionsHandlers.ListTransactions)
+	r.PUT(base+"/:wallet_id/pay-fare", payFareHandlers.PayFare)
+	r.POST(base+"/:wallet_id/transfer", transferHandlers.Transfer)
 
 	// Withdraw, freeze, delete
-	r.PUT("/:wallet_id/withdraw", withdrawDeleteHandlers.Withdraw)
-	r.GET("/:wallet_id/withdrawals", withdrawDeleteHandlers.ListWithdrawals)
-	r.PUT("/:wallet_id/freeze", adminHandlers.FreezeWallet)
-	r.DELETE("/:wallet_id", withdrawDeleteHandlers.DeleteWallet)
+	r.PUT(base+"/:wallet_id/withdraw", withdrawDeleteHandlers.Withdraw)
+	r.GET(base+"/:wallet_id/withdrawals", withdrawDeleteHandlers.ListWithdrawals)
+	r.PUT(base+"/:wallet_id/freeze", adminHandlers.FreezeWallet)
+	r.DELETE(base+"/:wallet_id", withdrawDeleteHandlers.DeleteWallet)
 
 	// Admin: list wallets & configs
-	r.GET("/admin/wallets", adminHandlers.FindWallets)
-	r.GET("/admin/configs", adminHandlers.GetConfigs)
-	r.PUT("/admin/configs", adminHandlers.UpdateConfig)
+	r.GET(base+"/admin/wallets", adminHandlers.FindWallets)
+	r.GET(base+"/admin/configs", adminHandlers.GetConfigs)
+	r.PUT(base+"/admin/configs", adminHandlers.UpdateConfig)
 
 	return r
 }

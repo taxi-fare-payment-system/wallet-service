@@ -3,13 +3,16 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"wallet_service/internal/auth"
+	"wallet_service/internal/messaging"
 	"wallet_service/internal/models"
 	"wallet_service/internal/repository"
 	"wallet_service/internal/server_utils"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
@@ -17,43 +20,45 @@ type AdminHandlers struct {
 	WalletRepo *repository.WalletRepository
 	ConfigRepo *repository.ConfigRepository
 	AuthClient *auth.Client
+	Bus        *messaging.Publisher
 }
 
-func (h *AdminHandlers) requireAdmin(c *gin.Context) (adminUserID int64, ok bool) {
-	adminUserIDStr := c.GetHeader("X-Admin-User-Id")
-	adminUserID, err := strconv.ParseInt(adminUserIDStr, 10, 64)
-	if err != nil || adminUserID <= 0 {
-		c.JSON(401, server_utils.ErrorResponse{Message: "missing or invalid admin user id"})
-		return 0, false
-	}
-	if h.AuthClient == nil {
-		c.JSON(503, server_utils.ErrorResponse{Message: "auth service not configured"})
-		return 0, false
-	}
-	isAdmin, err := h.AuthClient.VerifyAdmin(c.Request.Context(), adminUserID)
-	if err != nil {
-		c.JSON(502, server_utils.ErrorResponse{Message: "auth service error"})
-		return 0, false
-	}
-	if !isAdmin {
+func (h *AdminHandlers) requireTrustedAdmin(c *gin.Context) (actorUserID string, ok bool) {
+	role := server_utils.XUserRole(c)
+	if !server_utils.IsPlatformAdminRole(role) {
 		c.JSON(403, server_utils.ErrorResponse{Message: "admin access required"})
-		return 0, false
+		return "", false
 	}
-	return adminUserID, true
+	actorUserID, ok = server_utils.ParseXUserID(c)
+	if !ok {
+		c.JSON(401, server_utils.ErrorResponse{Message: "missing or invalid X-User-ID"})
+		return "", false
+	}
+	return actorUserID, true
 }
 
 func (h *AdminHandlers) FreezeWallet(c *gin.Context) {
 	walletIDStr := c.Param("wallet_id")
-	walletID, err := strconv.ParseInt(walletIDStr, 10, 64)
-	if err != nil || walletID <= 0 {
+	walletID := strings.TrimSpace(walletIDStr)
+	if _, err := uuid.Parse(walletID); err != nil {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet id"})
 		return
 	}
-	if _, ok := h.requireAdmin(c); !ok {
+	if _, ok := h.requireTrustedAdmin(c); !ok {
 		return
 	}
 
+	var w models.Wallet
 	db := h.WalletRepo.DB()
+	if err := db.WithContext(c.Request.Context()).First(&w, "id = ?", walletID).Error; err != nil {
+		if repository.IsNotFound(err) {
+			c.JSON(404, server_utils.ErrorResponse{Message: "wallet not found"})
+			return
+		}
+		c.JSON(500, server_utils.ErrorResponse{Message: "internal error"})
+		return
+	}
+
 	res := db.WithContext(c.Request.Context()).Model(&models.Wallet{}).Where("id = ?", walletID).Update("freezed", true)
 	if res.Error != nil {
 		c.JSON(500, server_utils.ErrorResponse{Message: "internal error"})
@@ -63,6 +68,19 @@ func (h *AdminHandlers) FreezeWallet(c *gin.Context) {
 		c.JSON(404, server_utils.ErrorResponse{Message: "wallet not found"})
 		return
 	}
+
+	_ = h.Bus.PublishNotification(c.Request.Context(), "notification.wallet.frozen", map[string]any{
+		"event_id":  uuid.NewString(),
+		"user_id":   w.UserID,
+		"user_role": string(w.WalletType),
+		"type":      "wallet_frozen",
+		"title":     "Wallet Frozen",
+		"content":   "Your wallet has been frozen by an admin. Contact support for details.",
+		"priority":  "high",
+		"category":  "account",
+		"channels":  []string{"sms"},
+	})
+
 	c.JSON(200, map[string]any{"success": true, "wallet_id": walletID})
 }
 
@@ -74,16 +92,14 @@ type findWalletsResponse struct {
 	Order  string           `json:"order"`
 }
 
-// FindWallets returns wallets for admin use with filtering, sorting, and pagination.
-//
-// Query params:
-// - filters: user_id, wallet_type, freezed, min_balance, max_balance
-// - sort: id (default), balance, created_at, updated_at
-// - order: asc|desc (default desc)
-// - limit: default 50, max 200
-// - offset: default 0
 func (h *AdminHandlers) FindWallets(c *gin.Context) {
-	if _, ok := h.requireAdmin(c); !ok {
+	if !server_utils.IsPlatformAdminRole(server_utils.XUserRole(c)) {
+		c.JSON(403, server_utils.ErrorResponse{Message: "admin access required"})
+		return
+	}
+	roleLower := strings.ToLower(server_utils.XUserRole(c))
+	if _, ok := server_utils.ParseXUserID(c); !ok {
+		c.JSON(401, server_utils.ErrorResponse{Message: "missing or invalid X-User-ID"})
 		return
 	}
 
@@ -123,22 +139,31 @@ func (h *AdminHandlers) FindWallets(c *gin.Context) {
 		return
 	}
 
-	db := h.WalletRepo.DB().WithContext(c.Request.Context()).Model(&models.Wallet{})
+	qdb := h.WalletRepo.DB().WithContext(c.Request.Context()).Model(&models.Wallet{})
+
+	if roleLower == "admin" {
+		sub, ok := server_utils.ParseXSubCity(c)
+		if !ok {
+			c.JSON(400, server_utils.ErrorResponse{Message: "missing X-Sub-City"})
+			return
+		}
+		qdb = qdb.Where("sub_city_id = ?", sub)
+	}
 
 	if v := c.Query("user_id"); v != "" {
-		userID, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || userID <= 0 {
+		userID := strings.TrimSpace(v)
+		if userID == "" {
 			c.JSON(400, server_utils.ErrorResponse{Message: "invalid user_id"})
 			return
 		}
-		db = db.Where("user_id = ?", userID)
+		qdb = qdb.Where("user_id = ?", userID)
 	}
 
 	if v := c.Query("wallet_type"); v != "" {
 		wt := models.WalletType(v)
 		switch wt {
 		case models.WalletTypePassenger, models.WalletTypeDriver, models.WalletTypeOwner:
-			db = db.Where("wallet_type = ?", wt)
+			qdb = qdb.Where("wallet_type = ?", wt)
 		default:
 			c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet_type"})
 			return
@@ -150,7 +175,7 @@ func (h *AdminHandlers) FindWallets(c *gin.Context) {
 			c.JSON(400, server_utils.ErrorResponse{Message: "invalid freezed"})
 			return
 		}
-		db = db.Where("freezed = ?", v == "true")
+		qdb = qdb.Where("freezed = ?", v == "true")
 	}
 
 	if v := c.Query("min_balance"); v != "" {
@@ -159,7 +184,7 @@ func (h *AdminHandlers) FindWallets(c *gin.Context) {
 			c.JSON(400, server_utils.ErrorResponse{Message: "invalid min_balance"})
 			return
 		}
-		db = db.Where("balance >= ?", minB)
+		qdb = qdb.Where("balance >= ?", minB)
 	}
 	if v := c.Query("max_balance"); v != "" {
 		maxB, err := decimal.NewFromString(v)
@@ -167,11 +192,11 @@ func (h *AdminHandlers) FindWallets(c *gin.Context) {
 			c.JSON(400, server_utils.ErrorResponse{Message: "invalid max_balance"})
 			return
 		}
-		db = db.Where("balance <= ?", maxB)
+		qdb = qdb.Where("balance <= ?", maxB)
 	}
 
 	var wallets []models.Wallet
-	if err := db.Order(sortCol + " " + order).Limit(limit).Offset(offset).Find(&wallets).Error; err != nil {
+	if err := qdb.Order(sortCol + " " + order).Limit(limit).Offset(offset).Find(&wallets).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, server_utils.ErrorResponse{Message: "internal error"})
 		return
 	}
@@ -189,7 +214,7 @@ func (h *AdminHandlers) FindWallets(c *gin.Context) {
 }
 
 func (h *AdminHandlers) GetConfigs(c *gin.Context) {
-	if _, ok := h.requireAdmin(c); !ok {
+	if _, ok := h.requireTrustedAdmin(c); !ok {
 		return
 	}
 	if h.ConfigRepo == nil {
@@ -210,7 +235,7 @@ type updateConfigRequest struct {
 }
 
 func (h *AdminHandlers) UpdateConfig(c *gin.Context) {
-	if _, ok := h.requireAdmin(c); !ok {
+	if _, ok := h.requireTrustedAdmin(c); !ok {
 		return
 	}
 	var req updateConfigRequest
