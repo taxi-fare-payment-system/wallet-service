@@ -17,7 +17,7 @@ services:
   wallet-app:
     build: .
     depends_on:
-      wallet-db:
+      postgres:
         condition: service_healthy
     env_file:
       - path: .env
@@ -41,7 +41,7 @@ services:
       DB_CONN_MAX_LIFE: ${DB_CONN_MAX_LIFE:-30m}
       JWT_SECRET: ${JWT_SECRET:-gringo}
     ports:
-      - "${PORT:-8088}:${PORT:-8088}"
+      - "${PORT:-8081}:${PORT:-8081}"
     command: ["/bin/sh", "-lc", "/app/wallet-migrate up && /app/wallet-server"]
 
   # Optional: run payment service separately and point PAYMENT_SERVICE_BASE_URL to it.

@@ -52,7 +52,7 @@ func NewRouter(
 
 	r.POST(base, walletHandlers.CreateWallet)
 	r.GET(base+"/users/:userId", walletHandlers.GetWalletByUser)
-	r.GET(base+"/:id", walletHandlers.GetWallet)
+	r.GET(base+"/:wallet_id", walletHandlers.GetWallet)
 
 	r.PUT(base+"/:wallet_id/topup", topupHandlers.TopupWallet)
 	r.POST(base+"/finalize-topup", topupHandlers.FinalizeTopup)
