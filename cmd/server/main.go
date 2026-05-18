@@ -48,6 +48,7 @@ func main() {
 
 	walletRepo := repository.NewWalletRepository(database.Gorm)
 
+
 	httpClient := &http.Client{Timeout: cfg.HTTPClientTimeout}
 	authClient, err := auth.NewClient(cfg.AuthServiceBaseURL, httpClient)
 	if err != nil {
@@ -67,7 +68,7 @@ func main() {
 	}
 	defer func() { _ = bus.Close() }()
 
-	walletService := &services.WalletService{WalletRepo: walletRepo}
+	walletService := &services.WalletService{WalletRepo: walletRepo, Bus: bus}
 	walletHandlers := &handlers.WalletHandlers{WalletRepo: walletRepo, Bus: bus}
 	topupHandlers := &handlers.TopupHandlers{
 		WalletRepo:    walletRepo,
@@ -98,11 +99,21 @@ func main() {
 		PaymentClient: paymentClient,
 		WalletRepo:    walletRepo,
 	}
-	adminHandlers := &handlers.AdminHandlers{WalletRepo: walletRepo, Bus: bus}
+	configRepo := repository.NewConfigRepository(database.Gorm)
+	adminHandlers := &handlers.AdminHandlers{
+		WalletRepo: walletRepo,
+		ConfigRepo: configRepo,
+		AuthClient: authClient,
+		Bus:        bus,
+	}
+
+	withdrawalRepo := repository.NewWithdrawalRepository(database.Gorm)
 	withdrawDeleteHandlers := &handlers.WithdrawDeleteHandlers{
-		WalletRepo:    walletRepo,
-		PaymentClient: paymentClient,
-		Bus:           bus,
+		WalletRepo:     walletRepo,
+		WithdrawalRepo: withdrawalRepo,
+		ConfigRepo:     configRepo,
+		PaymentClient:  paymentClient,
+		Bus:            bus,
 	}
 	assistantHandlers := &handlers.AssistantHandlers{PaymentClient: paymentClient}
 	transferHandlers := &handlers.TransferHandlers{

@@ -1,4 +1,5 @@
 FROM golang:1.26.2-alpine AS build
+ENV GOTOOLCHAIN=auto
 
 WORKDIR /app
 

@@ -2,8 +2,10 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	"wallet_service/internal/messaging"
 	"wallet_service/internal/models"
 	"wallet_service/internal/repository"
 
@@ -13,6 +15,7 @@ import (
 
 type WalletService struct {
 	WalletRepo *repository.WalletRepository
+	Bus        *messaging.Publisher
 }
 
 type TransferHook func(ctx context.Context) error
@@ -89,6 +92,27 @@ func (s *WalletService) transferBalance(ctx context.Context, fromWalletID, toWal
 				return err
 			}
 		}
+
+		// Notify Sender
+		if s.Bus != nil {
+			_ = s.Bus.PublishNotification(ctx, "notification.wallet.transfer_sent", map[string]any{
+				"user_id":  fmt.Sprintf("%v", from.UserID),
+				"type":     "transfer_sent",
+				"title":    "Payment Sent",
+				"content":  fmt.Sprintf("You have successfully sent %.2f ETB.", amount.InexactFloat64()),
+				"category": "wallet",
+			})
+
+			// Notify Receiver
+			_ = s.Bus.PublishNotification(ctx, "notification.wallet.transfer_received", map[string]any{
+				"user_id":  fmt.Sprintf("%v", to.UserID),
+				"type":     "transfer_received",
+				"title":    "Payment Received",
+				"content":  fmt.Sprintf("You have received %.2f ETB in your wallet.", amount.InexactFloat64()),
+				"category": "wallet",
+			})
+		}
+
 		return nil
 	})
 }
@@ -140,6 +164,16 @@ func (s *WalletService) ApplyTopupIdempotent(
 
 		w.Balance = w.Balance.Add(amount)
 		w.UpdatedAt = time.Now().UTC()
+		if s.Bus != nil {
+			_ = s.Bus.PublishNotification(ctx, "notification.wallet.topup_success", map[string]any{
+				"user_id":  fmt.Sprintf("%v", w.UserID),
+				"type":     "topup_success",
+				"title":    "Top-up Successful",
+				"content":  fmt.Sprintf("Your wallet has been credited with %.2f ETB.", amount.InexactFloat64()),
+				"category": "wallet",
+			})
+		}
+
 		if err := tx.Save(&w).Error; err != nil {
 			return err
 		}

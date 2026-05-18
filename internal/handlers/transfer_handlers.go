@@ -101,6 +101,8 @@ func (h *TransferHandlers) Transfer(c *gin.Context) {
 		return
 	}
 
+	// For P2P, both should ideally be passengers or owners, but let's keep it general
+	// as per service capability unless restricted.
 	amountDec := decimal.NewFromFloat(req.Amount)
 
 	var transferOut payment.TransferResponse
@@ -128,5 +130,6 @@ func (h *TransferHandlers) Transfer(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"success":        true,
 		"transaction_id": transferOut.TransactionID,
+		"receipt_url":    transferOut.ReceiptURL,
 	})
 }

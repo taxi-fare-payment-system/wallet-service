@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 
 	"wallet_service/internal/messaging"
@@ -18,13 +19,16 @@ import (
 )
 
 type WithdrawDeleteHandlers struct {
-	WalletRepo    *repository.WalletRepository
-	PaymentClient *payment.Client
-	Bus           *messaging.Publisher
+	WalletRepo     *repository.WalletRepository
+	WithdrawalRepo *repository.WithdrawalRepository
+	ConfigRepo     *repository.ConfigRepository
+	PaymentClient  *payment.Client
+	Bus            *messaging.Publisher
 }
 
 type withdrawRequest struct {
 	Amount              float64 `json:"amount"`
+	Method              string  `json:"method"`
 	AccountName         string  `json:"account_name"`
 	AccountNumber       string  `json:"account_number"`
 	BankCode            string  `json:"bank_code"`
@@ -141,8 +145,51 @@ func (h *WithdrawDeleteHandlers) Withdraw(c *gin.Context) {
 				return errOwnerMin
 			}
 		}
+		// Check withdrawal limits
+		status := models.WithdrawalStatusCompleted
+		wltUUID, _ := uuid.Parse(wlt.ID)
+		if h.ConfigRepo != nil && h.WithdrawalRepo != nil {
+			limitStr, _ := h.ConfigRepo.Get(c.Request.Context(), "daily_withdrawal_limit")
+			thresholdStr, _ := h.ConfigRepo.Get(c.Request.Context(), "auto_approve_threshold")
+
+			if limitStr != "" {
+				limit, _ := decimal.NewFromString(limitStr)
+				totalToday, _ := h.WithdrawalRepo.GetTotalWithdrawnToday(c.Request.Context(), wltUUID)
+				totalTodayDec := decimal.NewFromFloat(totalToday)
+				if totalTodayDec.Add(decimal.NewFromFloat(req.Amount)).GreaterThan(limit) {
+					return errors.New("daily withdrawal limit exceeded")
+				}
+			}
+
+			if thresholdStr != "" {
+				threshold, _ := decimal.NewFromString(thresholdStr)
+				if decimal.NewFromFloat(req.Amount).GreaterThan(threshold) {
+					status = models.WithdrawalStatusPending
+				}
+			}
+		}
 		wlt.Balance = wlt.Balance.Sub(amt)
-		return tx.Save(&wlt).Error
+		if err := tx.Save(&wlt).Error; err != nil {
+			return err
+		}
+
+		// Save withdrawal record
+		fee := amt.Mul(decimal.NewFromFloat(0.02)) // Dummy 2% fee
+		netAmount := amt.Sub(fee)
+
+		withdrawal := models.Withdrawal{
+			WalletID:  wltUUID,
+			Amount:    amt,
+			Fee:       fee,
+			NetAmount: netAmount,
+			Method:    req.Method,
+			Status:    status,
+		}
+		
+		if h.WithdrawalRepo != nil {
+			return h.WithdrawalRepo.Create(c.Request.Context(), tx, &withdrawal)
+		}
+		return nil
 	})
 	if err != nil {
 		if repository.IsNotFound(err) {
@@ -161,6 +208,10 @@ func (h *WithdrawDeleteHandlers) Withdraw(c *gin.Context) {
 			return
 		case errOwnerMin:
 			c.JSON(400, server_utils.ErrorResponse{Message: "owner wallet must keep minimum balance of 100 ETB"})
+			return
+		}
+		if err.Error() == "daily withdrawal limit exceeded" {
+			c.JSON(400, server_utils.ErrorResponse{Message: "daily withdrawal limit exceeded"})
 			return
 		}
 		c.JSON(400, server_utils.ErrorResponse{Message: err.Error()})
@@ -281,4 +332,43 @@ func (h *WithdrawDeleteHandlers) DeleteWallet(c *gin.Context) {
 	}
 
 	c.Status(204)
+}
+
+func (h *WithdrawDeleteHandlers) ListWithdrawals(c *gin.Context) {
+	walletIDStr := strings.TrimSpace(c.Param("wallet_id"))
+	walletUUID, err := uuid.Parse(walletIDStr)
+	if err != nil {
+		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet id"})
+		return
+	}
+
+	limit := 50
+	offset := 0
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if o := c.Query("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed > 0 {
+			offset = parsed
+		}
+	}
+
+	if h.WithdrawalRepo == nil {
+		c.JSON(500, server_utils.ErrorResponse{Message: "withdrawal repository not configured"})
+		return
+	}
+
+	withdrawals, err := h.WithdrawalRepo.ListByWalletID(c.Request.Context(), walletUUID, limit, offset)
+	if err != nil {
+		c.JSON(500, server_utils.ErrorResponse{Message: "failed to list withdrawals"})
+		return
+	}
+
+	c.JSON(200, map[string]interface{}{
+		"items":  withdrawals,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
