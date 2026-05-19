@@ -15,17 +15,20 @@ All paths are under the service base URL and use prefix **`/api/v1/wallet`**.
 | `GET` | `/transactions` |
 | `POST` | `/` (base path = create wallet) |
 | `GET` | `/users/:userId` |
-| `GET` | `/:id` |
+| `GET` | `/:wallet_id` |
 | `PUT` | `/:wallet_id/topup` |
 | `POST` | `/finalize-topup` |
 | `PUT` | `/:wallet_id/pay-fare` |
 | `POST` | `/:wallet_id/transfer` |
 | `PUT` | `/:wallet_id/withdraw` |
+| `GET` | `/:wallet_id/withdrawals` |
 | `PUT` | `/:wallet_id/freeze` |
 | `DELETE` | `/:wallet_id` |
 | `GET` | `/admin/wallets` |
+| `GET` | `/admin/configs` |
+| `PUT` | `/admin/configs` |
 
-Sections below follow this order: [Health](#health) → [Banks](#banks-payment-pass-through) → [Wallets](#wallets) → [Top-up](#top-up) → [Pay fare](#pay-fare) → [Wallet transfer (P2P)](#wallet-transfer-p2p) → [Assistant earnings](#assistant-earnings) → [Transactions](#transactions-proxy) → [Withdraw](#withdraw) → [Admin: freeze](#admin-freeze) & [Admin: find wallets](#admin-find-wallets) → [Delete wallet](#delete-wallet).
+Sections below follow this order: [Health](#health) → [Banks](#banks-payment-pass-through) → [Wallets](#wallets) → [Top-up](#top-up) → [Pay fare](#pay-fare) → [Wallet transfer (P2P)](#wallet-transfer-p2p) → [Assistant earnings](#assistant-earnings) → [Transactions](#transactions-proxy) → [Withdraw](#withdraw) → [List withdrawals](#list-withdrawals) → [Admin: freeze](#admin-freeze) & [Admin: find wallets](#admin-find-wallets) & [Admin: configs](#admin-configs) → [Delete wallet](#delete-wallet).
 
 ## Conventions
 
@@ -34,7 +37,7 @@ Sections below follow this order: [Health](#health) → [Banks](#banks-payment-p
 - **Request ID**: optional `X-Request-ID` header is accepted; the service echoes/sets `X-Request-ID` on responses.
 - **User IDs**: `user_id` values in this service are **strings**. Gateway-injected `X-User-ID` is treated as the same string id.
 - **Gateway trust headers** (JWT-validated routes): `X-User-ID`, `X-User-Role`, and for scoped admins `X-Sub-City`.
-- **Payment / Trip calls**: when the wallet service calls Payment or Trip on behalf of the user, it forwards the caller’s `Authorization: Bearer …` from the incoming request.
+- **Payment / Trip / Auth calls**: when the wallet service calls Payment, Trip, or Auth on behalf of the user, it forwards the caller’s `Authorization: Bearer …` from the incoming request (e.g. top-up profile lookup, P2P receiver lookup by phone).
 - **Error response shape** (most non-2xx responses):
 
 ```json
@@ -65,7 +68,7 @@ Notes:
 ### Integrations (out of band)
 
 - **Analytics** (RabbitMQ): exchange `analytics_exchange` (topic). Events: `analytics.wallet.created`, `analytics.wallet.balance_updated` (topup, fare debit/credit, withdrawal). Env: `RABBITMQ_URL`, `ANALYTICS_EXCHANGE`.
-- **Notifications** (RabbitMQ): exchange `notification.exchange` (topic). Events include `notification.wallet.topup_succeeded`, `notification.wallet.pay_fare_succeeded`, `notification.wallet.frozen`, `notification.wallet.withdrawal_initiated`. Env: `NOTIFICATION_EXCHANGE`.
+- **Notifications** (RabbitMQ): exchange `notification.exchange` (topic). Events include `notification.wallet.topup_succeeded`, `notification.wallet.pay_fare_succeeded`, `notification.wallet.frozen`, `notification.wallet.withdrawal_initiated`, `notification.wallet.transfer_sent`, `notification.wallet.transfer_received`. Env: `NOTIFICATION_EXCHANGE`.
 
 ---
 
@@ -125,7 +128,7 @@ Notes:
 
 ## Wallets
 
-### `GET /api/v1/wallet/:id`
+### `GET /api/v1/wallet/:wallet_id`
 
 - **Description**: fetch wallet by wallet id
 - **Response 200**: Wallet object
@@ -223,7 +226,8 @@ Notes:
   "payer_user_id": "<string>",
   "receiver_wallet_id": "<wallet-uuid>",
   "amount": "<decimal string>",
-  "currency": "ETB"
+  "currency": "ETB",
+  "phone_number": "<optional; used in notification metadata>"
 }
 ```
 
@@ -245,8 +249,8 @@ Notes:
 
 ### `PUT /api/v1/wallet/:wallet_id/pay-fare`
 
-- **Description**: atomically debits the passenger wallet, credits the driver wallet, records the transfer in Payment Service, validates the trip, and emits analytics/notification events.
-- **Requires**: `TRIP_SERVICE_BASE_URL` (e.g. `http://trip:8086`). Trip validation: `GET /trips/<trip_id>?status=ACTIVE` with forwarded `Authorization`.
+- **Description**: atomically debits the passenger wallet, credits the driver wallet, records the transfer in Payment Service, and emits analytics/notification events. `trip_id` is required and forwarded to Payment; Trip Service active-trip validation is **not** currently enforced in code (requires `TRIP_SERVICE_BASE_URL` to be set so the trip client is configured).
+- **Requires**: `TRIP_SERVICE_BASE_URL` (e.g. `http://trip:8086`). If unset, returns **502** `{ "message": "trip client not configured" }`.
 - **Request (JSON)**:
 
 ```json
@@ -274,12 +278,20 @@ Notes:
 - **Errors** (non-exhaustive):
   - 400 `{ "message": "invalid wallet id" }`
   - 400 `{ "message": "invalid json body" }`
-  - 400 `{ "message": "trip not found or not active" }`
+  - 400 `{ "message": "amount must be > 0" }`
+  - 400 `{ "message": "invalid driver_wallet_id" }`
   - 400 `{ "message": "trip_id is required" }`
   - 400 `{ "message": "receiver_full_name is required" }`
+  - 400 `{ "message": "driver_wallet_id must reference a driver wallet" }`
+  - 400 `{ "message": "driver wallet must not belong to the same user" }`
+  - 400 `{ "message": "trip not found or not active" }` (when trip validation is enabled)
+  - 400 `{ "message": "insufficient balance" }`
   - 403 `{ "message": "only passenger wallets can pay fare" }`
   - 403 `{ "message": "wallet is frozen" }`
-  - 400 `{ "message": "insufficient balance" }`
+  - 403 `{ "message": "driver wallet is frozen" }`
+  - 404 `{ "message": "wallet not found" }` (passenger)
+  - 404 `{ "message": "driver wallet not found" }`
+  - 502 `{ "message": "trip client not configured" }`
   - 502 `{ "message": "<trip/payment service error>" }`
 
 ---
@@ -323,7 +335,10 @@ Notes:
   - 502 `{ "message": "auth client not configured" }`
   - 502 `{ "message": "<auth service error>" }`
   - 502 `{ "message": "receiver display name not available from auth" }`
-  - 400 other wallet-service / insufficient-balance / frozen-wallet errors from the underlying transfer logic
+  - 400 `{ "message": "invalid amount" }`
+  - 400 `{ "message": "insufficient funds" }`
+  - 400 `{ "message": "cannot transfer to same wallet" }`
+  - 403 `{ "message": "wallet is frozen" }` (source or destination frozen)
   - 502 Payment Service errors surfaced as `{ "message": "<payment service error>" }` where applicable
 
 ---
@@ -402,13 +417,15 @@ Notes:
 
 ### `PUT /api/v1/wallet/:wallet_id/withdraw`
 
-- **Description**: validates `bank_code` against Payment’s Chapa list, debits the **driver** or **owner** wallet, calls Payment `POST /api/v1/payments/withdrawals` to start the payout, reverses the debit on Payment `500`/`502`/`503`, and publishes analytics/notification events on success.
+- **Description**: validates `bank_code` against Payment’s Chapa list, debits the **driver** or **owner** wallet, persists a local withdrawal row (with optional auto-approve / daily-limit rules from [admin configs](#admin-configs)), calls Payment `POST /api/v1/payments/withdrawals` to start the payout, reverses the debit on Payment `500`/`502`/`503`, and publishes analytics/notification events on success.
 - **Headers**: **`X-User-ID` required** and must own the wallet; **`Authorization` required** for Payment calls.
+- **Config keys** (optional): `daily_withdrawal_limit` (decimal string, ETB per wallet per UTC day), `auto_approve_threshold` (amounts above this are stored as `pending` locally instead of `completed`).
 - **Request (JSON)**:
 
 ```json
 {
   "amount": 100.0,
+  "method": "bank_transfer",
   "account_name": "Abebe Kebede",
   "account_number": "1000123456789",
   "bank_code": "656",
@@ -432,13 +449,55 @@ Notes:
   - 401 `{ "message": "missing X-User-ID" }`
   - 400 `{ "message": "invalid wallet id" }`
   - 400 `{ "message": "invalid json body" }`
+  - 400 `{ "message": "amount must be > 0" }`
+  - 400 `{ "message": "account_name, account_number, and bank_code are required" }`
   - 400 `{ "message": "invalid bank_code" }`
+  - 400 `{ "message": "daily withdrawal limit exceeded" }`
+  - 400 `{ "message": "owner wallet must keep minimum balance of 100 ETB" }`
   - 403 `{ "message": "forbidden" }` (not wallet owner)
   - 403 `{ "message": "wallet is frozen" }`
   - 403 `{ "message": "withdraw not allowed for this wallet type" }`
+  - 404 `{ "message": "wallet not found" }`
   - 422 `{ "message": "insufficient balance" }`
-  - 400 owner minimum balance rule for owner wallets
-  - 5xx Payment errors after reversal attempt
+  - 502 Payment errors (may reverse wallet debit on `500`/`502`/`503`)
+
+---
+
+## List withdrawals
+
+### `GET /api/v1/wallet/:wallet_id/withdrawals`
+
+- **Description**: paginated list of withdrawal records stored in the wallet database for the given wallet.
+- **Query params**:
+  - `limit` (default 50; values `> 0` are honored)
+  - `offset` (default 0; values `> 0` are honored)
+- **Response 200**:
+
+```json
+{
+  "items": [
+    {
+      "id": "<uuid>",
+      "wallet_id": "<uuid>",
+      "amount": "100.00",
+      "fee": "2.00",
+      "net_amount": "98.00",
+      "method": "bank_transfer",
+      "status": "pending|completed|failed",
+      "transaction_ref": "<optional>",
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ],
+  "limit": 50,
+  "offset": 0
+}
+```
+
+- **Errors**:
+  - 400 `{ "message": "invalid wallet id" }`
+  - 500 `{ "message": "withdrawal repository not configured" }`
+  - 500 `{ "message": "failed to list withdrawals" }`
 
 ---
 
@@ -457,6 +516,7 @@ Notes:
 ```
 
 - **Errors** (non-exhaustive):
+  - 400 `{ "message": "invalid wallet id" }`
   - 401 `{ "message": "missing or invalid X-User-ID" }`
   - 403 `{ "message": "admin access required" }`
   - 404 `{ "message": "wallet not found" }`
@@ -510,6 +570,65 @@ Notes:
   - 400 `{ "message": "invalid freezed" }`
   - 400 `{ "message": "invalid min_balance" }`
   - 400 `{ "message": "invalid max_balance" }`
+
+---
+
+## Admin: configs
+
+### `GET /api/v1/wallet/admin/configs`
+
+- **Description**: returns all system configuration key/value rows (used for withdrawal limits and auto-approve threshold).
+- **Headers**: `X-User-ID` and `X-User-Role` (`admin` or `superadmin`) required.
+- **Response 200**:
+
+```json
+{
+  "configs": [
+    {
+      "key": "daily_withdrawal_limit",
+      "value": "5000",
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+```
+
+- **Errors**:
+  - 401 `{ "message": "missing or invalid X-User-ID" }`
+  - 403 `{ "message": "admin access required" }`
+  - 500 `{ "message": "config repository not configured" }`
+  - 500 `{ "message": "failed to fetch configs" }`
+
+### `PUT /api/v1/wallet/admin/configs`
+
+- **Description**: upserts a single config key (e.g. `daily_withdrawal_limit`, `auto_approve_threshold`).
+- **Headers**: same as `GET /admin/configs`.
+- **Request (JSON)**:
+
+```json
+{
+  "key": "daily_withdrawal_limit",
+  "value": "5000"
+}
+```
+
+- **Response 200**:
+
+```json
+{
+  "success": true,
+  "key": "daily_withdrawal_limit",
+  "value": "5000"
+}
+```
+
+- **Errors**:
+  - 400 `{ "message": "invalid request body" }`
+  - 401 `{ "message": "missing or invalid X-User-ID" }`
+  - 403 `{ "message": "admin access required" }`
+  - 500 `{ "message": "config repository not configured" }`
+  - 500 `{ "message": "failed to update config" }`
 
 ---
 
