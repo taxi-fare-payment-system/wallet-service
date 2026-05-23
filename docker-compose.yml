@@ -34,7 +34,7 @@ services:
       TRIP_SERVICE_BASE_URL: ${TRIP_SERVICE_BASE_URL:-http://trip:8086}
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq_notification:5672/}
       ANALYTICS_EXCHANGE: ${ANALYTICS_EXCHANGE:-analytics_exchange}
-      NOTIFICATION_EXCHANGE: ${NOTIFICATION_EXCHANGE:-notification.exchange}
+      NOTIFICATION_EXCHANGE: ${NOTIFICATION_EXCHANGE:-notification_exchange}
       DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-25}
       DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-25}
       DB_CONN_MAX_IDLE: ${DB_CONN_MAX_IDLE:-5m}

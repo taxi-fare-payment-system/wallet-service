@@ -79,7 +79,9 @@ func (h *AssistantHandlers) ListEarnings(c *gin.Context) {
 	q.Set("limit", strconv.Itoa(limit))
 	q.Set("offset", strconv.Itoa(offset))
 
-	list, err := h.PaymentClient.ListTransactions(c.Request.Context(), q)
+	ctx := server_utils.WithTrustUserID(c.Request.Context(), callerID)
+	ctx = server_utils.WithTrustUserRole(ctx, server_utils.XUserRole(c))
+	list, err := h.PaymentClient.ListTransactions(ctx, q)
 	if err != nil {
 		c.JSON(502, server_utils.ErrorResponse{Message: err.Error()})
 		return
