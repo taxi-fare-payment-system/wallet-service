@@ -45,7 +45,7 @@ func Load() (Config, error) {
 		TripServiceBaseURL:    getenvAnyDefault([]string{"SERVICE_TRIP_URL", "TRIP_SERVICE_BASE_URL"}, ""),
 		RabbitMQURL:           getenvDefault("RABBITMQ_URL", ""),
 		AnalyticsExchange:     getenvDefault("ANALYTICS_EXCHANGE", "analytics_exchange"),
-		NotificationExchange:  getenvDefault("NOTIFICATION_EXCHANGE", "notification.exchange"),
+		NotificationExchange:  getenvDefault("NOTIFICATION_EXCHANGE", "notification_exchange"),
 		DBMaxOpenConns:        getenvIntDefault("DB_MAX_OPEN_CONNS", 25),
 		DBMaxIdleConns:        getenvIntDefault("DB_MAX_IDLE_CONNS", 25),
 		DBConnMaxIdle:         getenvDurationDefault("DB_CONN_MAX_IDLE", 5*time.Minute),
