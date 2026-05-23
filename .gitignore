@@ -5,3 +5,21 @@ payment_service_spec.md
 wallet_payment.md
 migrate.exe
 server.exe
+
+# Docker dev
+Dockerfile.dev
+docker-compose.dev.yml
+
+# Temp
+tmp/
+
+# Build binaries
+main
+server
+api
+worker
+migrate
+*.exe
+bin/
+
+docker-compose.override.yml
