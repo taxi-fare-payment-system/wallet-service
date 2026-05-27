@@ -164,6 +164,46 @@ func (c *Client) internalUserContactURL(userID string) string {
 }
 
 // GetInternalUserContact returns public contact fields for a user (inter-service; documented in auth.md).
+// driverByAssistantResponse mirrors auth's AssistantAssignmentResponse wrapped in success envelope.
+type driverByAssistantResponse struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+	Data    struct {
+		ID       string `json:"id"`
+		DriverID string `json:"driver_id"`
+	} `json:"data"`
+}
+
+// GetDriverByAssistant returns the linked driver ID for an assistant (calls auth internal).
+func (c *Client) GetDriverByAssistant(ctx context.Context, assistantID string) (string, error) {
+	var out driverByAssistantResponse
+	u := *c.baseURL
+	u.Path = path.Join(strings.TrimRight(u.Path, "/"), "/internal/users", strings.TrimSpace(assistantID), "driver")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	if rid := server_utils.RequestIDFromContext(ctx); rid != "" {
+		req.Header.Set("X-Request-ID", rid)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var er server_utils.ErrorResponse
+		_ = json.NewDecoder(resp.Body).Decode(&er)
+		return "", &APIError{StatusCode: resp.StatusCode, Message: er.Message}
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	return out.Data.DriverID, nil
+}
+
 func (c *Client) GetInternalUserContact(ctx context.Context, userID string) (InternalUserContactResponse, error) {
 	var out InternalUserContactResponse
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.internalUserContactURL(userID), nil)

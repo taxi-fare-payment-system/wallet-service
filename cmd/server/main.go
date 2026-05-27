@@ -98,6 +98,7 @@ func main() {
 		Logger:        logger,
 		PaymentClient: paymentClient,
 		WalletRepo:    walletRepo,
+		AuthClient:    authClient,
 	}
 	configRepo := repository.NewConfigRepository(database.Gorm)
 	adminHandlers := &handlers.AdminHandlers{
