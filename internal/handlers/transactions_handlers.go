@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"wallet_service/internal/auth"
 	"wallet_service/internal/models"
 	"wallet_service/internal/payment"
 	"wallet_service/internal/repository"
@@ -20,6 +21,7 @@ type TransactionsHandlers struct {
 	Logger        *slog.Logger
 	PaymentClient *payment.Client
 	WalletRepo    *repository.WalletRepository
+	AuthClient    *auth.Client
 }
 
 var allowedTransactionQueryParams = map[string]bool{
@@ -129,11 +131,23 @@ func (h *TransactionsHandlers) ListTransactions(c *gin.Context) {
 }
 
 func (h *TransactionsHandlers) resolveCallerWalletID(c *gin.Context, userID string) (string, error) {
-	walletType, ok := walletTypeForRole(server_utils.XUserRole(c))
+	role := server_utils.XUserRole(c)
+	walletType, ok := walletTypeForRole(role)
 	if !ok {
 		return "", errNoWalletForRole
 	}
-	w, err := h.WalletRepo.GetByUserIDAndType(c.Request.Context(), userID, walletType)
+	ownerID := userID
+	if strings.ToLower(strings.TrimSpace(role)) == "driver-assistant" {
+		if h.AuthClient == nil {
+			return "", errors.New("auth client not configured")
+		}
+		driverID, err := h.AuthClient.GetDriverByAssistant(c.Request.Context(), userID)
+		if err != nil {
+			return "", err
+		}
+		ownerID = driverID
+	}
+	w, err := h.WalletRepo.GetByUserIDAndType(c.Request.Context(), ownerID, walletType)
 	if err != nil {
 		return "", err
 	}
@@ -148,6 +162,8 @@ func walletTypeForRole(role string) (models.WalletType, bool) {
 		return models.WalletTypeDriver, true
 	case "owner":
 		return models.WalletTypeOwner, true
+	case "driver-assistant":
+		return models.WalletTypeDriver, true
 	default:
 		return "", false
 	}
@@ -164,5 +180,17 @@ func (h *TransactionsHandlers) walletOwnedByUser(c *gin.Context, callerUserID st
 	if err != nil {
 		return false
 	}
-	return w.UserID == callerUserID
+	if w.UserID == callerUserID {
+		return true
+	}
+	// Allow driver-assistant to access the driver's wallet
+	role := strings.ToLower(strings.TrimSpace(server_utils.XUserRole(c)))
+	if role == "driver-assistant" && h.AuthClient != nil {
+		driverID, err := h.AuthClient.GetDriverByAssistant(c.Request.Context(), callerUserID)
+		if err != nil {
+			return false
+		}
+		return w.UserID == driverID
+	}
+	return false
 }

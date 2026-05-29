@@ -103,6 +103,7 @@ func main() {
 		Logger:        logger,
 		PaymentClient: paymentClient,
 		WalletRepo:    walletRepo,
+		AuthClient:    authClient,
 	}
 	adminHandlers := &handlers.AdminHandlers{
 		WalletRepo: walletRepo,
