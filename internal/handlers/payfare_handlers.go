@@ -21,6 +21,7 @@ import (
 type PayFareHandlers struct {
 	WalletRepo    *repository.WalletRepository
 	WalletService *services.WalletService
+	ConfigRepo    *repository.ConfigRepository
 	PaymentClient *payment.Client
 	TripClient    *trip.Client
 	Bus           *messaging.Publisher
@@ -112,6 +113,22 @@ func (h *PayFareHandlers) PayFare(c *gin.Context) {
 		return
 	}
 
+	platformFee, err := parseFarePlatformFee(c.Request.Context(), h.ConfigRepo)
+	if err != nil {
+		c.JSON(500, server_utils.ErrorResponse{Message: "invalid fare platform fee configuration"})
+		return
+	}
+
+	systemWallet, err := h.WalletRepo.GetSystemWallet(c.Request.Context())
+	if err != nil {
+		if repository.IsNotFound(err) {
+			c.JSON(500, server_utils.ErrorResponse{Message: "system wallet not configured"})
+			return
+		}
+		c.JSON(500, server_utils.ErrorResponse{Message: "internal error"})
+		return
+	}
+
 	amountDec := decimal.NewFromFloat(req.Amount)
 	assistant := strings.TrimSpace(req.AssistantID)
 
@@ -144,7 +161,15 @@ func (h *PayFareHandlers) PayFare(c *gin.Context) {
 		return nil
 	}
 
-	if err := h.WalletService.TransferBalanceWithHook(ctx, passengerWallet.ID, driverWallet.ID, amountDec, hook); err != nil {
+	if err := h.WalletService.TransferFareWithPlatformFee(
+		ctx,
+		passengerWallet.ID,
+		driverWallet.ID,
+		systemWallet.ID,
+		amountDec,
+		platformFee,
+		hook,
+	); err != nil {
 		switch {
 		case errors.Is(err, trip.ErrTripNotActive):
 			c.JSON(400, server_utils.ErrorResponse{Message: "trip not found or not active"})
@@ -167,7 +192,7 @@ func (h *PayFareHandlers) PayFare(c *gin.Context) {
 	passAfter, errPass := h.WalletRepo.GetByID(c.Request.Context(), passengerWallet.ID)
 	drvAfter, errDrv := h.WalletRepo.GetByID(c.Request.Context(), driverWallet.ID)
 	if errPass == nil && errDrv == nil {
-		deltaPass := amountDec.Neg().StringFixed(2)
+		deltaPass := amountDec.Add(platformFee).Neg().StringFixed(2)
 		deltaDrv := amountDec.StringFixed(2)
 		balPass := passAfter.Balance.StringFixed(2)
 		balDrv := drvAfter.Balance.StringFixed(2)
@@ -190,6 +215,17 @@ func (h *PayFareHandlers) PayFare(c *gin.Context) {
 		}
 		_ = h.Bus.PublishAnalytics(c.Request.Context(), "analytics.wallet.balance_updated", fieldsDebit)
 		_ = h.Bus.PublishAnalytics(c.Request.Context(), "analytics.wallet.balance_updated", fieldsCredit)
+		if platformFee.Cmp(decimal.Zero) > 0 {
+			sysAfter, errSys := h.WalletRepo.GetByID(c.Request.Context(), systemWallet.ID)
+			if errSys == nil {
+				_ = h.Bus.PublishAnalytics(c.Request.Context(), "analytics.wallet.balance_updated", map[string]any{
+					"wallet_id": systemWallet.ID,
+					"balance":   sysAfter.Balance.StringFixed(2),
+					"delta":     platformFee.StringFixed(2),
+					"reason":    "fare_platform_fee",
+				})
+			}
+		}
 	}
 
 	amtStr := amountDec.StringFixed(2)

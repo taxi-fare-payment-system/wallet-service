@@ -117,19 +117,20 @@ func (c *Client) GetMe(ctx context.Context) (MeResponse, error) {
 	return out, nil
 }
 
-func (c *Client) userByPhoneURL(phone string) string {
+func (c *Client) userByPhoneURL(phone, role string) string {
 	u := *c.baseURL
 	u.Path = path.Join(strings.TrimRight(u.Path, "/"), "/api/v1/auth/users/by-phone")
 	q := u.Query()
 	q.Set("phone", phone)
+	q.Set("role", role)
 	u.RawQuery = q.Encode()
 	return u.String()
 }
 
-// GetUserByPhone looks up a user by phone (requires caller JWT in context).
-func (c *Client) GetUserByPhone(ctx context.Context, phone string) (UserByPhoneResponse, error) {
+// GetUserByPhone looks up a user by phone and role (requires caller JWT in context).
+func (c *Client) GetUserByPhone(ctx context.Context, phone, role string) (UserByPhoneResponse, error) {
 	var out UserByPhoneResponse
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.userByPhoneURL(phone), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.userByPhoneURL(phone, role), nil)
 	if err != nil {
 		return out, err
 	}

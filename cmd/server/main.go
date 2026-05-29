@@ -47,7 +47,10 @@ func main() {
 	}
 
 	walletRepo := repository.NewWalletRepository(database.Gorm)
-
+	if _, err := walletRepo.EnsureSystemWallet(context.Background()); err != nil {
+		logger.Error("system_wallet_init_failed", slog.Any("error", err))
+		os.Exit(1)
+	}
 
 	httpClient := &http.Client{Timeout: cfg.HTTPClientTimeout}
 	authClient, err := auth.NewClient(cfg.AuthServiceBaseURL, httpClient)
@@ -87,9 +90,11 @@ func main() {
 		tripClient = tc
 	}
 
+	configRepo := repository.NewConfigRepository(database.Gorm)
 	payFareHandlers := &handlers.PayFareHandlers{
 		WalletRepo:    walletRepo,
 		WalletService: walletService,
+		ConfigRepo:    configRepo,
 		PaymentClient: paymentClient,
 		TripClient:    tripClient,
 		Bus:           bus,
@@ -100,7 +105,6 @@ func main() {
 		WalletRepo:    walletRepo,
 		AuthClient:    authClient,
 	}
-	configRepo := repository.NewConfigRepository(database.Gorm)
 	adminHandlers := &handlers.AdminHandlers{
 		WalletRepo: walletRepo,
 		ConfigRepo: configRepo,

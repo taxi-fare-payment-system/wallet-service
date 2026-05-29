@@ -43,3 +43,7 @@ func IsPlatformAdminRole(role string) bool {
 		return false
 	}
 }
+
+func IsSuperadminRole(role string) bool {
+	return strings.ToLower(strings.TrimSpace(role)) == "superadmin"
+}

@@ -6,6 +6,7 @@ import (
 
 	"wallet_service/internal/models"
 
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -40,6 +41,34 @@ func (r *WalletRepository) GetByUserIDAndType(ctx context.Context, userID string
 	var w models.Wallet
 	err := r.db.WithContext(ctx).First(&w, "user_id = ? AND wallet_type = ?", userID, walletType).Error
 	return w, err
+}
+
+func (r *WalletRepository) GetSystemWallet(ctx context.Context) (models.Wallet, error) {
+	return r.GetByUserIDAndType(ctx, models.SystemWalletUserID, models.WalletTypeSystem)
+}
+
+// EnsureSystemWallet creates the platform system wallet if it does not exist.
+func (r *WalletRepository) EnsureSystemWallet(ctx context.Context) (models.Wallet, error) {
+	w, err := r.GetSystemWallet(ctx)
+	if err == nil {
+		return w, nil
+	}
+	if !IsNotFound(err) {
+		return w, err
+	}
+	w = models.Wallet{
+		UserID:     models.SystemWalletUserID,
+		WalletType: models.WalletTypeSystem,
+		Freezed:    false,
+		Balance:    decimal.Zero,
+	}
+	if err := r.Create(ctx, &w); err != nil {
+		if w2, err2 := r.GetSystemWallet(ctx); err2 == nil {
+			return w2, nil
+		}
+		return w, err
+	}
+	return w, nil
 }
 
 func (r *WalletRepository) Create(ctx context.Context, w *models.Wallet) error {

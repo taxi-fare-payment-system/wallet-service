@@ -68,6 +68,10 @@ func (h *WalletHandlers) GetWallet(c *gin.Context) {
 		c.JSON(500, server_utils.ErrorResponse{Message: "internal error"})
 		return
 	}
+	if wallet.WalletType.IsSystem() && !server_utils.IsSuperadminRole(server_utils.XUserRole(c)) {
+		c.JSON(404, server_utils.ErrorResponse{Message: "wallet not found"})
+		return
+	}
 
 	c.JSON(200, toWalletResponse(wallet))
 }
@@ -87,6 +91,11 @@ func (h *WalletHandlers) GetWalletByUser(c *gin.Context) {
 	walletType := models.WalletType(walletTypeRaw)
 	switch walletType {
 	case models.WalletTypePassenger, models.WalletTypeDriver, models.WalletTypeOwner:
+	case models.WalletTypeSystem:
+		if !server_utils.IsSuperadminRole(server_utils.XUserRole(c)) {
+			c.JSON(404, server_utils.ErrorResponse{Message: "wallet not found"})
+			return
+		}
 	default:
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet type"})
 		return
@@ -130,6 +139,9 @@ func (h *WalletHandlers) CreateWallet(c *gin.Context) {
 	walletType := models.WalletType(strings.TrimSpace(req.Type))
 	switch walletType {
 	case models.WalletTypePassenger, models.WalletTypeDriver, models.WalletTypeOwner:
+	case models.WalletTypeSystem:
+		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet type"})
+		return
 	default:
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet type"})
 		return
