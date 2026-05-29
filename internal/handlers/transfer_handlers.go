@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"wallet_service/internal/auth"
+	"wallet_service/internal/models"
 	"wallet_service/internal/payment"
 	"wallet_service/internal/repository"
 	"wallet_service/internal/server_utils"
@@ -62,8 +63,16 @@ func (h *TransferHandlers) Transfer(c *gin.Context) {
 		c.JSON(404, server_utils.ErrorResponse{Message: "source wallet not found"})
 		return
 	}
+	if fromWallet.WalletType.IsSystem() {
+		c.JSON(404, server_utils.ErrorResponse{Message: "wallet not found"})
+		return
+	}
+	if fromWallet.WalletType != models.WalletTypePassenger {
+		c.JSON(403, server_utils.ErrorResponse{Message: "transfers are only allowed from passenger wallets"})
+		return
+	}
 
-	receiver, err := h.AuthClient.GetUserByPhone(authCtx, toPhone)
+	receiver, err := h.AuthClient.GetUserByPhone(authCtx, toPhone, "passenger")
 	if err != nil {
 		var api *auth.APIError
 		if errors.As(err, &api) {
@@ -72,7 +81,7 @@ func (h *TransferHandlers) Transfer(c *gin.Context) {
 				c.JSON(401, server_utils.ErrorResponse{Message: "authentication error"})
 				return
 			case 404:
-				c.JSON(404, server_utils.ErrorResponse{Message: "receiver not found"})
+				c.JSON(404, server_utils.ErrorResponse{Message: "no passenger account exists for this phone number; transfers are only allowed between passenger wallets"})
 				return
 			}
 			c.JSON(502, server_utils.ErrorResponse{Message: err.Error()})
@@ -82,10 +91,10 @@ func (h *TransferHandlers) Transfer(c *gin.Context) {
 		return
 	}
 
-	toWallet, err := h.WalletRepo.GetByUserIDAndType(c.Request.Context(), receiver.Data.ID, fromWallet.WalletType)
+	toWallet, err := h.WalletRepo.GetByUserIDAndType(c.Request.Context(), receiver.Data.ID, models.WalletTypePassenger)
 	if err != nil {
 		if repository.IsNotFound(err) {
-			c.JSON(404, server_utils.ErrorResponse{Message: "destination wallet not found"})
+			c.JSON(404, server_utils.ErrorResponse{Message: "receiver has no passenger wallet"})
 			return
 		}
 		c.JSON(500, server_utils.ErrorResponse{Message: "internal error"})
@@ -101,8 +110,6 @@ func (h *TransferHandlers) Transfer(c *gin.Context) {
 		return
 	}
 
-	// For P2P, both should ideally be passengers or owners, but let's keep it general
-	// as per service capability unless restricted.
 	amountDec := decimal.NewFromFloat(req.Amount)
 
 	var transferOut payment.TransferResponse

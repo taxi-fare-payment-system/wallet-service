@@ -141,6 +141,10 @@ func (h *AdminHandlers) FindWallets(c *gin.Context) {
 
 	qdb := h.WalletRepo.DB().WithContext(c.Request.Context()).Model(&models.Wallet{})
 
+	if !server_utils.IsSuperadminRole(roleLower) {
+		qdb = qdb.Where("wallet_type <> ?", models.WalletTypeSystem)
+	}
+
 	if roleLower == "admin" {
 		sub, ok := server_utils.ParseXSubCity(c)
 		if !ok {
@@ -163,6 +167,12 @@ func (h *AdminHandlers) FindWallets(c *gin.Context) {
 		wt := models.WalletType(v)
 		switch wt {
 		case models.WalletTypePassenger, models.WalletTypeDriver, models.WalletTypeOwner:
+			qdb = qdb.Where("wallet_type = ?", wt)
+		case models.WalletTypeSystem:
+			if !server_utils.IsSuperadminRole(roleLower) {
+				c.JSON(403, server_utils.ErrorResponse{Message: "system wallet is only visible to superadmin"})
+				return
+			}
 			qdb = qdb.Where("wallet_type = ?", wt)
 		default:
 			c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet_type"})
@@ -242,6 +252,18 @@ func (h *AdminHandlers) UpdateConfig(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid request body"})
 		return
+	}
+	req.Key = strings.TrimSpace(req.Key)
+	if req.Key == models.ConfigFarePlatformFee && !server_utils.IsSuperadminRole(server_utils.XUserRole(c)) {
+		c.JSON(403, server_utils.ErrorResponse{Message: "only superadmin can update fare platform fee"})
+		return
+	}
+	if req.Key == models.ConfigFarePlatformFee {
+		fee, err := decimal.NewFromString(strings.TrimSpace(req.Value))
+		if err != nil || fee.Cmp(decimal.Zero) < 0 {
+			c.JSON(400, server_utils.ErrorResponse{Message: "fare_platform_fee must be a non-negative decimal amount in ETB"})
+			return
+		}
 	}
 	if h.ConfigRepo == nil {
 		c.JSON(500, server_utils.ErrorResponse{Message: "config repository not configured"})

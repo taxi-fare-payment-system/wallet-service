@@ -12,7 +12,15 @@ const (
 	WalletTypePassenger WalletType = "passenger"
 	WalletTypeDriver    WalletType = "driver"
 	WalletTypeOwner     WalletType = "owner"
+	WalletTypeSystem    WalletType = "system"
 )
+
+// SystemWalletUserID is the fixed user_id for the platform system wallet.
+const SystemWalletUserID = "__system__"
+
+func (t WalletType) IsSystem() bool {
+	return t == WalletTypeSystem
+}
 
 type Wallet struct {
 	ID         string          `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`

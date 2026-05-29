@@ -1,13 +1,59 @@
 # Auth Service Interface
 
-Base URL: `http://localhost:8082`
+Base URL: `http://localhost:8080` (override with `SERVER_PORT`)
 
 Successful JSON responses use `{ "status": "success", "message": "...", "data": ... }` (`data` may be omitted). Errors use `{ "status": "error", "message": "..." }` except login ban payload, which matches the `ACCOUNT_BANNED` shape documented under login.
 
 ## Authentication and Claims
+
 - JWT Bearer token is required for protected endpoints.
 - JWT claims include: `user_id`, `phone`, `role`, `is_verified`.
-- Admin JWT now includes `sub_city_id` (nullable when admin has no assignment).
+- Admin JWT includes `sub_city_id` (nullable when admin has no assignment).
+
+## Account model (phone + role)
+
+- A user account is uniquely identified by **`(phone, role)`**, not phone alone.
+- The same phone number may have separate accounts for different roles (e.g. one `passenger` and one `driver` row).
+- Duplicate registration for the same `(phone, role)` returns **409**.
+- **`is_phone_verified` is per account** — verifying OTP for one role does not verify other roles on the same phone.
+- Login, verify-phone, forgot-password, and reset-password all require **`role`** so the service targets the correct account.
+
+## User object (`UserResponse`)
+
+Returned by `GET /me`, login, register, admin user APIs, and `PATCH /me/avatar`. Example:
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "phone": "0912345678",
+  "email": "user@example.com",
+  "display_name": "Abebe Kebede",
+  "profile_picture": "https://cdn.example/avatars/abebe.jpg",
+  "role": "passenger",
+  "sub_city_id": null,
+  "is_active": true,
+  "is_verified": true,
+  "is_phone_verified": true,
+  "created_at": "2026-05-16T10:00:00Z",
+  "language": "en",
+  "push_enabled": true,
+  "biometric_enabled": false,
+  "vehicle_type": "",
+  "plate_number": "",
+  "national_id": "",
+  "license_number": "",
+  "national_id_url": "",
+  "license_url": "",
+  "vehicle_reg_url": ""
+}
+```
+
+- `profile_picture` is optional — a URL string (max 2048 characters) for the user's avatar.
+- Driver/owner onboarding fields (`vehicle_type`, `plate_number`, `national_id`, `license_number`, document URLs) are populated when applicable.
+- **Preferences** (also returned on `GET /me` and login):
+  - `language` — UI language code (default `"en"`).
+  - `push_enabled` — whether push notifications are enabled (default `true`). Update via `PATCH /preferences`.
+  - `biometric_enabled` — whether biometric login is enabled (default `false`).
 
 ## Public Endpoints
 
@@ -15,27 +61,44 @@ Successful JSON responses use `{ "status": "success", "message": "...", "data": 
 - Health check endpoint.
 
 ### `POST /api/v1/auth/register`
-- Registers a user.
-- Request:
+- Registers a user for a specific role.
+- Request (JSON or multipart form):
 ```json
 {
   "phone": "0912345678",
   "password": "password123",
   "role": "driver",
-  "display_name": "Abebe Kebede"
+  "display_name": "Abebe Kebede",
+  "email": "user@example.com",
+  "vehicle_type": "minibus",
+  "plate_number": "AA-12345",
+  "national_id": "ID123",
+  "license_number": "DL456"
 }
 ```
+- `display_name`, `email`, and driver fields are optional unless your client flow requires them.
+- Optional multipart file fields: `national_id_file`, `license_file`, `vehicle_reg_file` (uploaded via document service when configured).
 - Notes:
   - Allowed `role` values: `passenger`, `driver`, `owner`, `driver-assistant`, and **`superadmin` only while no superadmin account exists yet** (bootstrap); otherwise register returns **409** `superadmin already exists`.
   - **`admin` cannot self-register**; a superadmin creates admin accounts with `POST /api/v1/auth/admin/users`.
-  - Sends OTP asynchronously through Messaging service (skipped when `TEST_OTP_CODE` is set, or when `MESSAGING_SERVICE_BASE_URL` is empty).
+  - Returns **409** `Phone number already registered for this role` when `(phone, role)` already has a completed account.
+  - Sends OTP asynchronously through the Messaging service when `MESSAGING_SERVICE_BASE_URL` (or `MESSAGING_SERVICE_URL`) is configured. Setting `TEST_OTP_CODE` does **not** skip send.
   - Creates wallet asynchronously for `driver` and `passenger`.
+  - Creates a vehicle asynchronously in the Vehicle service for new `driver` registrations when `VEHICLE_SERVICE_BASE_URL` is configured.
   - Publishes analytics and notification onboarding events.
-- Response: `201` with created user profile (same shape as `GET /me` user object).
+- Response: `201` with created user profile and JWT (`LoginResponse`: `user` + `token`).
 
 ### `POST /api/v1/auth/login`
-- Authenticates user and returns JWT.
-- Request: `phone`, `password` (JSON).
+- Authenticates a specific `(phone, role)` account and returns JWT.
+- Request:
+```json
+{
+  "phone": "0912345678",
+  "password": "password123",
+  "role": "passenger"
+}
+```
+- `role` is required. Allowed values: `passenger`, `driver`, `owner`, `admin`, `driver-assistant`, `superadmin`.
 - Success payload includes `user` (profile fields) and `token` (JWT string).
 - Returns `403` on banned users:
 ```json
@@ -46,79 +109,291 @@ Successful JSON responses use `{ "status": "success", "message": "...", "data": 
 ```
 
 ### `POST /api/v1/auth/verify-phone`
-- Verifies phone OTP.
+- Verifies phone OTP for a specific role account (same handler as `POST /api/v1/auth/verify-otp`).
 - Request:
 ```json
 {
   "phone": "0912345678",
+  "role": "driver",
   "code": "123456"
 }
 ```
+- `role` is required. Allowed values: `passenger`, `driver`, `owner`, `driver-assistant`, `superadmin` (not `admin`).
+- Verification rules:
+  - If `code` equals `TEST_OTP_CODE` (when that env var is set), verification succeeds without calling the messaging service.
+  - Otherwise the code is checked via `POST {MESSAGING_SERVICE_BASE_URL}/api/v1/messaging/otp/verify` (requires messaging URL to be configured).
+- Response `200`: `LoginResponse` — `user` (`UserResponse`) and `token` (JWT string when the account already has a real password; empty string for in-progress sign-up with `PENDING_PASSWORD`).
 - Effects:
-  - Marks `is_phone_verified=true`.
-  - Publishes `analytics.user.phone_verified` and `notification.user.phone_verified` on every successful verification (including when the code matches `TEST_OTP_CODE`). When the test code is used, payloads include `verification_method: "test_otp"` (analytics body and notification metadata).
+  - Creates a placeholder row for `(phone, role)` if none exists (`password: PENDING_PASSWORD`).
+  - Sets `is_phone_verified=true` **only on that role's row** (not propagated to other roles).
+  - Publishes `analytics.user.phone_verified` and `notification.user.phone_verified`. When the test code is used, payloads include `verification_method: "test_otp"`.
+
+### `POST /api/v1/auth/verify-otp`
+- Alias of `POST /api/v1/auth/verify-phone` (same request body, rules, and response). Requires `phone`, `role`, and `code`.
+
+### `POST /api/v1/auth/forgot-password`
+- Sends a password-reset OTP for a specific `(phone, role)` account.
+- Request:
+```json
+{
+  "phone": "0912345678",
+  "role": "passenger"
+}
+```
+- Always returns **200** when the request is valid (including when no matching account exists, to prevent enumeration).
+- OTP is sent only when an account exists for that `(phone, role)`.
+
+### `POST /api/v1/auth/reset-password`
+- Resets password after OTP verification for a specific `(phone, role)` account.
+- Request:
+```json
+{
+  "phone": "0912345678",
+  "role": "passenger",
+  "code": "123456",
+  "new_password": "newpassword123"
+}
+```
+- Uses the same OTP rules as verify-phone (`TEST_OTP_CODE` or messaging service).
+- Response **200** on success.
+- Response **400** for invalid OTP or accounts with no password set yet (`PENDING_PASSWORD`).
+- Response **404** when the account is not found after OTP verification.
+
+### `GET /api/v1/auth/users/:id/public`
+- Returns basic public profile info for a user by UUID. **No JWT required.**
+- Path `:id` is the user's UUID.
+- Response `200` `data` shape:
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "avatar": "https://cdn.example/avatars/abebe.jpg",
+  "name": "Abebe Kebede",
+  "role": "passenger"
+}
+```
+- Response `404` when the user does not exist, or when the user is role **`admin`** or **`superadmin`**.
+
+### `GET /api/v1/auth/admin/verify-admin`
+- Query: `user_id` (UUID, required).
+- Returns `{ "is_admin": true }` (**200**) when the user is `admin` or `superadmin`; otherwise **403** `{ "is_admin": false }`.
 
 ## Protected User Endpoints
 
 ### `GET /api/v1/auth/me`
-- Returns own profile including `display_name`, `is_phone_verified`, and `email` if present.
+- Returns own profile (`UserResponse`), including preferences and driver fields when present.
 
-### `PATCH /api/v1/auth/password`
-- Changes current authenticated user's password.
-
-## Driver Assistant Endpoints (Driver JWT only)
-
-### `POST /api/v1/auth/driver/assistant`
-- Assign assistant to the authenticated driver.
+### `PATCH /api/v1/auth/me/avatar`
+- Updates the authenticated user's profile picture URL. Any signed-in role.
 - Request:
 ```json
 {
-  "assistant_user_id": 5
+  "profile_picture": "https://cdn.example/avatars/new.jpg"
 }
 ```
-- Rules:
-  - Assistant must be role `driver-assistant`.
-  - Assistant must be verified.
-  - One assistant per driver.
+- `profile_picture` is required in the body (max 2048 characters). Send JSON `null` to clear the avatar.
+- Response `200`: updated `UserResponse`.
 
-### `GET /api/v1/auth/driver/assistant`
-- Returns current assistant assignment.
-- `404` when not assigned.
+### `GET /api/v1/auth/users/by-phone`
+- Lookup a user by phone **and role**. Requires a valid JWT (any role).
+- Query:
+  - `phone` (required) — Ethiopian format (`09xxxxxxxx`, `07xxxxxxxx`, or `+2519/7xxxxxxxx`).
+  - `role` (required) — one of the stored role values (`passenger`, `driver`, `owner`, `admin`, `driver-assistant`, `superadmin`).
+- Response `200`: same `UserResponse` shape as `GET /me`.
+- Response `404` when no account exists for that exact `(phone, role)`.
 
-### `DELETE /api/v1/auth/driver/assistant`
-- Unassigns current assistant.
-- Returns `204`.
+### `PATCH /api/v1/auth/password`
+- Changes current authenticated user's password (requires current password).
+
+### `PATCH /api/v1/auth/preferences`
+- Updates the authenticated user's preferences (partial update). Any signed-in role.
+- Request — include only the fields to change:
+```json
+{
+  "language": "am",
+  "push_enabled": false,
+  "biometric_enabled": true
+}
+```
+- Response `200`: `{ "status": "success", "message": "Preferences updated successfully" }` (no `data` body).
+
+## Driver Profile and Reviews (any authenticated JWT)
+
+Path parameter `:id` is the driver's user UUID.
+
+### `GET /api/v1/auth/drivers/:id/profile`
+- Returns a driver's public profile with embedded review summary and list (includes `vehicle_type`, `plate_number`, etc.; phone omitted).
+- Response `404` when the user does not exist or is not role `driver`.
+
+### `GET /api/v1/auth/drivers/:id/reviews`
+- Returns only the reviews aggregate for a driver.
+
+### `POST /api/v1/auth/drivers/:id/reviews`
+- Submits a review for a driver. The reviewer is the authenticated user (`user_id` from JWT).
+- Request:
+```json
+{
+  "message": "Very professional driver",
+  "rating": 4.5
+}
+```
+- Rules: `message` required (max 1000 chars); `rating` required, **0**–**5**; one review per reviewer per driver; cannot review yourself.
+- Response **201** with the new review and updated aggregate.
+- Response **409** when this reviewer has already reviewed the driver.
+
+## Driver Assistant Management (driver/owner JWT)
+
+### `GET /api/v1/auth/driver/assistants`
+- Returns all assistant assignments linked to the authenticated driver/owner.
+
+### `POST /api/v1/auth/driver/assistants/invite`
+- Invites an assistant by **driver-assistant account phone** (resolves `(phone, driver-assistant)`).
+- Request: `{ "phone": "0987654321" }`
+
+### `PATCH /api/v1/auth/driver/assistants/:id/permissions`
+- Updates permissions for an assignment owned by the caller.
+- Request (all fields optional):
+```json
+{
+  "can_collect": true,
+  "can_view_earnings": true,
+  "has_qr_access": true,
+  "can_manage_route": false
+}
+```
+
+### `DELETE /api/v1/auth/driver/assistants/:id`
+- Removes an assistant assignment owned by the caller.
+
+### Legacy driver assistant routes
+- `POST /api/v1/auth/driver/assistant` — assign/link assistant (overlap with invite flow).
+- `GET /api/v1/auth/driver/assistant` — get linked assistant profile.
+
+## Assistant-Specific Endpoints (assistant JWT)
+
+### `POST /api/v1/auth/assistant/link`
+- Self-link to a driver by **driver account phone** (resolves `(phone, driver)`).
+- Request: `{ "driver_phone": "0912345678" }`
+
+### `POST /api/v1/auth/assistant/unlink`
+- Assistant removes their own link to the current driver.
+
+### `GET /api/v1/auth/assistant/driver`
+- Driver profile linked to the authenticated assistant.
+
+### `GET /api/v1/auth/assistant/info`
+- The assistant's own assignment details and permissions (`can_manage_route` included when set).
+
+## Problem Reports (any authenticated JWT)
+
+### `POST /api/v1/auth/reports`
+- Submit a support/problem report.
+- Request:
+```json
+{
+  "category": "payment",
+  "description": "Optional details, max 2000 chars"
+}
+```
+
+### `GET /api/v1/auth/reports`
+- List the authenticated user's reports. Query: `page` (default 1), `limit` (default 20).
+
+### `GET /api/v1/auth/reports/:id`
+- Get one of the authenticated user's reports.
+
+### Admin report management (`admin` / `superadmin` JWT)
+- `GET /api/v1/auth/admin/reports` — list all reports; optional query `status`, `page`, `limit`.
+- `GET /api/v1/auth/admin/reports/:id`
+- `PATCH /api/v1/auth/admin/reports/:id/status` — body:
+```json
+{
+  "status": "under_review",
+  "notes": "optional admin notes"
+}
+```
+- Allowed `status`: `under_review`, `resolved`, `rejected`, `escalated`.
+
+## Vehicle Change Requests (driver JWT)
+
+### `POST /api/v1/auth/vehicle-change-requests`
+- Submit a vehicle change request.
+- Optional query params: `vehicle_id`, `old_plate`, `old_type` (current vehicle context).
+- Request:
+```json
+{
+  "reason_category": "change_vehicle",
+  "new_plate_number": "AA-99999",
+  "new_vehicle_type": "minibus",
+  "description": "Optional, max 2000 chars"
+}
+```
+- `reason_category`: `fix_mistake` or `change_vehicle`.
+
+### `GET /api/v1/auth/vehicle-change-requests`
+- List the authenticated driver's requests. Query: `page`, `limit`.
+
+### `GET /api/v1/auth/vehicle-change-requests/:id`
+- Get one of the authenticated driver's requests.
+
+### Admin vehicle change management
+- `GET /api/v1/auth/admin/vehicle-change-requests`
+- `GET /api/v1/auth/admin/vehicle-change-requests/:id`
+- `PATCH /api/v1/auth/admin/vehicle-change-requests/:id/status` — body:
+```json
+{
+  "status": "approved",
+  "notes": "optional"
+}
+```
+- Allowed `status`: `under_review`, `approved`, `rejected`.
+- Optional query on status update: `vehicle_service_url`.
+
+## Route Change Requests (driver JWT)
+
+### `POST /api/v1/auth/route-change-requests`
+- Submit a route change request.
+- Optional query: `old_route_id`.
+- Request:
+```json
+{
+  "new_route_id": "route-uuid-or-id",
+  "new_route_name": "Bole → Megenagna",
+  "reason": "Optional, max 2000 chars",
+  "transport_doc_url": "https://..."
+}
+```
+
+### `GET /api/v1/auth/route-change-requests`
+- List the authenticated driver's requests. Query: `page`, `limit`.
+
+### `GET /api/v1/auth/route-change-requests/:id`
+- Get one of the authenticated driver's requests.
+
+### Admin route change management
+- `GET /api/v1/auth/admin/route-change-requests`
+- `GET /api/v1/auth/admin/route-change-requests/:id`
+- `PATCH /api/v1/auth/admin/route-change-requests/:id/status` — same status values as vehicle change requests.
 
 ## Admin Endpoints (Admin/Superadmin JWT)
 
 ### User Management
 - `GET /api/v1/auth/admin/users`
 - `GET /api/v1/auth/admin/users/:id`
-- `POST /api/v1/auth/admin/users` (JWT role **`admin`** may only create users with role **`owner`** — any other `role` returns **403**; **`superadmin`** may create any valid role. New `admin` or `superadmin` users get `is_phone_verified=true` by default. Optional `sub_city_id` is applied only when the new user’s `role` is `admin` and must reference an existing sub-city; if `role` is not `admin`, `sub_city_id` is ignored.)
-- `PATCH /api/v1/auth/admin/users/:id`
+- `POST /api/v1/auth/admin/users` — JWT role **`admin`** may only create **`owner`** users; **`superadmin`** may create any valid role. Uniqueness is on `(phone, role)`. New `admin` / `superadmin` users get `is_phone_verified=true` by default. Optional `sub_city_id` applies only when `role` is `admin`.
+- `PATCH /api/v1/auth/admin/users/:id` — changing `phone` or `role` checks `(phone, role)` conflicts.
 - `DELETE /api/v1/auth/admin/users/:id`
 - `GET /api/v1/auth/admin/users/role/:role`
 
 ### Verification
-- `GET /api/v1/auth/admin/pending-drivers` — unverified drivers, owners, and driver-assistants pending approval.
-- `POST /api/v1/auth/admin/verify-driver` — body:
-```json
-{ "user_id": "550e8400-e29b-41d4-a716-446655440000" }
-```
-(`user_id` must be a quoted UUID string from `GET /admin/pending-drivers` or user list responses.)
-- `POST /api/v1/auth/admin/unverify-driver` — same body as verify-driver (`user_id`).
+- `GET /api/v1/auth/admin/pending-drivers` — unverified drivers, owners, and driver-assistants.
+- `POST /api/v1/auth/admin/verify-driver` — body: `{ "user_id": "<uuid>" }`
+- `POST /api/v1/auth/admin/unverify-driver` — same body.
+
+On driver verification, the service may create a QR code (QR service) and assign the driver's vehicle (Vehicle service) when those URLs are configured.
 
 ### Ban and Unban
-- `POST /api/v1/auth/admin/users/:id/ban`
-  - Request:
-```json
-{
-  "reason": "Violated terms of service"
-}
-```
-  - Response includes: `user_id`, `banned`, `reason`, `banned_by`, `banned_at`.
+- `POST /api/v1/auth/admin/users/:id/ban` — body: `{ "reason": "..." }`
 - `POST /api/v1/auth/admin/users/:id/unban`
-  - Response includes: `user_id`, `banned`, `unbanned_by`, `unbanned_at`.
 
 ### Admin create user request (reference)
 ```json
@@ -127,115 +402,99 @@ Successful JSON responses use `{ "status": "success", "message": "...", "data": 
   "password": "password123",
   "role": "admin",
   "display_name": "Optional Name",
+  "profile_picture": "https://cdn.example/avatars/admin.jpg",
   "sub_city_id": 1,
   "is_active": true,
   "is_verified": true
 }
 ```
-- For sub-city on create, use **`sub_city_id`** (preferred), or **`subcity_id`** / **`subCityId`**; only the first non-null among those three is used. This applies only when **`role` is `admin`**.
-- `sub_city_id` / `subcity_id` / `subCityId`, `is_active`, `is_verified`, and `display_name` are optional where not required by validation.
+- Sub-city keys accepted on create: `sub_city_id` (preferred), `subcity_id`, or `subCityId` — only when `role` is `admin`.
 
-### Admin update user (reference)
-`PATCH /api/v1/auth/admin/users/:id` — all fields optional; include only what changes:
-```json
-{
-  "phone": "0912000000",
-  "password": "newpassword",
-  "role": "driver",
-  "display_name": "Updated",
-  "is_active": true,
-  "is_verified": false
-}
-```
+## SubCity Endpoints
 
-## SubCity Endpoints (Auth is owner)
+### Canonical routes (`/api/v1/auth/subcities`)
+- `GET /api/v1/auth/subcities` — list (any authenticated JWT).
+- `GET /api/v1/auth/subcities/:id`
+- `POST /api/v1/auth/subcities` — `{ "name": "Bole" }` (**superadmin**).
+- `PATCH /api/v1/auth/subcities/:id` — partial update (**superadmin**).
+- `DELETE /api/v1/auth/subcities/:id` (**superadmin**).
+- `POST /api/v1/auth/subcities/:id/admins/:userId` — assign admin (**superadmin**).
+- `DELETE /api/v1/auth/subcities/:id/admins/:userId` — unassign admin (**superadmin**).
 
-### Canonical routes (`/api/v1/auth/subcities`, superadmin write)
-- `GET /api/v1/auth/subcities` — list all sub-cities with assigned admins (any authenticated JWT).
-- `GET /api/v1/auth/subcities/:id` — one sub-city with assigned admins.
-- `POST /api/v1/auth/subcities` — body `{ "name": "Bole" }` (superadmin).
-- `PUT /api/v1/auth/subcities/:id` — body JSON must include `"name": "..."` (superadmin); omitting `name` returns `400` (`no fields to update`).
-- `DELETE /api/v1/auth/subcities/:id` (superadmin).
-- `POST /api/v1/auth/subcities/:id/admins/:userId` — assign admin user `userId` to sub-city `:id` (path param, no JSON body).
-- `DELETE /api/v1/auth/subcities/:id/admins/:userId` — remove that assignment.
+## Internal Endpoints (service-to-service; no public gateway exposure)
 
-### Legacy compatibility (`/api/v1/auth/admin/subcities/...`, superadmin only)
-Same behaviors as above, different paths and verbs where noted:
-
-- `GET /api/v1/auth/admin/subcities/assignment/check` — query: `subcity_id`, `admin_user_id` (both required). Response indicates whether that admin is assigned to that sub-city.
-- `GET /api/v1/auth/admin/subcities` — list (includes assigned admins per row).
-- `POST /api/v1/auth/admin/subcities` — body `{ "name": "..." }`.
-- `GET /api/v1/auth/admin/subcities/:id` — get one.
-- `GET /api/v1/auth/admin/subcities/:id/admin-assignment` — admins assigned to `:id` plus assignment flags.
-- `PATCH /api/v1/auth/admin/subcities/:id` — partial update; body must include `name` (handler rejects empty update).
-- `DELETE /api/v1/auth/admin/subcities/:id`
-- `POST /api/v1/auth/admin/subcities/:id/assign-admin` — body `{ "admin_user_id": 7 }`.
-- `POST /api/v1/auth/admin/subcities/:id/unassign-admin` — body `{ "admin_user_id": 7 }`.
-
-## Internal Endpoints (No public gateway exposure)
+### `GET /api/v1/auth/internal/users/:id`
+- Full `UserResponse` for a user by UUID.
 
 ### `GET /api/v1/auth/drivers/:id/assistant`
-- Returns assistant assignment for a specific driver.
+- Assistant assignment for a specific driver.
+
+### `GET /internal/drivers/:driver_id/assistant/permissions`
+- Permission flags for the driver's assigned assistant.
 
 ### `GET /internal/users/:id/contact`
-- Returns user contact info (includes `display_name` for Wallet / Payment attribution; inter-service).
-```json
-{
-  "phone": "+251911223344",
-  "email": "user@example.com",
-  "display_name": "Recipient Name"
-}
-```
+- Contact info: `phone`, `email`, `display_name`, `full_name`.
+
+### `GET /internal/users/:id/driver`
+- Driver assignment info for an assistant user ID.
 
 ## Async Integrations
 
 ### Messaging Service
-- `POST {MESSAGING_SERVICE_BASE_URL}/api/v1/messaging/otp/send` (not called when `TEST_OTP_CODE` is set, or when the messaging base URL is empty)
-- `POST {MESSAGING_SERVICE_BASE_URL}/api/v1/messaging/otp/verify` (skipped when the submitted code equals `TEST_OTP_CODE`; leave `TEST_OTP_CODE` unset in production)
+- `POST {MESSAGING_SERVICE_BASE_URL}/api/v1/messaging/otp/send` — after register (body: `{ "recipient": "<phone>", "type": "sms" }`).
+- `POST {MESSAGING_SERVICE_BASE_URL}/api/v1/messaging/otp/verify` — on verify-phone / verify-otp / reset-password unless `TEST_OTP_CODE` matches.
+- Leave `TEST_OTP_CODE` unset in production.
 
 ### Wallet Service
 - `POST {WALLET_SERVICE_BASE_URL}/api/v1/wallet`
-- Body:
 ```json
 {
-  "user_id": 123,
+  "user_id": "550e8400-e29b-41d4-a716-446655440000",
   "type": "driver"
 }
 ```
 
-### QR Service
-- Triggered on successful driver verification.
-- `POST {QR_SERVICE_BASE_URL}/api/v1/qr`
-- Body:
-```json
-{
-  "driver_id": "123"
-}
-```
+### Vehicle Service
+- On driver register: `POST {VEHICLE_SERVICE_BASE_URL}/api/v1/vehicles`
+- On driver verification: list owner vehicles, approve if pending, assign driver to vehicle.
 
-### RabbitMQ Exchanges
-- Analytics exchange: `analytics_exchange`
-- Notification exchange: `notification.exchange`
+### QR Service
+- On successful driver verification: `POST {QR_SERVICE_BASE_URL}/api/v1/qr` with `{ "driver_id": "<uuid>" }`.
+
+### RabbitMQ
+- Analytics exchange: `RABBITMQ_EXCHANGE_ANALYTICS` (default `analytics_events`)
+- Notification exchange: `RABBITMQ_EXCHANGE_NOTIFICATION` (default `notification_events`)
 
 Published topic examples:
 - `analytics.user.created`
 - `analytics.user.status_updated`
 - `analytics.user.phone_verified`
-- `analytics.user.banned`
-- `analytics.user.unbanned`
+- `analytics.user.banned` / `analytics.user.unbanned`
 - `notification.user.welcome`
 - `notification.user.phone_verified`
 - `notification.user.driver_pending_documents`
 - `notification.user.driver_verified`
-- `notification.user.banned`
-- `notification.user.unbanned`
+- `notification.user.banned` / `notification.user.unbanned`
+
+## Observability
+- Every HTTP request receives `X-Request-ID` (UUID) in the response.
+- Structured logs tag activity with `direction` (`inbound` / `outbound`), `component` (`http`, `messaging`, `rabbitmq`, `database`), and `request_id` when available.
 
 ## Environment Variables
-- `TEST_OTP_CODE` (optional; dev-only wildcard OTP for verify-phone; when set, SMS send on register is skipped)
-- `MESSAGING_SERVICE_BASE_URL`
-- `WALLET_SERVICE_BASE_URL`
-- `QR_SERVICE_BASE_URL`
-- `RABBITMQ_URL`
-- `ANALYTICS_EXCHANGE` (default `analytics_exchange`)
-- `NOTIFICATION_EXCHANGE` (default `notification.exchange`)
-- `APPEAL_CONTACT`
+
+| Variable | Purpose |
+|----------|---------|
+| `SERVER_PORT` | HTTP port (default `8080`) |
+| `JWT_SECRET` | JWT signing secret |
+| `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | PostgreSQL |
+| `TEST_OTP_CODE` | Dev-only OTP bypass on verify-phone / reset-password |
+| `MESSAGING_SERVICE_BASE_URL` or `MESSAGING_SERVICE_URL` | OTP send/verify |
+| `WALLET_SERVICE_BASE_URL` or `WALLET_SERVICE_URL` | Wallet creation |
+| `QR_SERVICE_BASE_URL` or `QR_SERVICE_URL` | Driver QR on verification |
+| `VEHICLE_SERVICE_BASE_URL` or `VEHICLE_SERVICE_URL` | Vehicle create/assign |
+| `ROUTE_SERVICE_BASE_URL` or `ROUTE_SERVICE_URL` | Route change workflow |
+| `TRIP_SERVICE_BASE_URL` or `TRIP_SERVICE_URL` | Trip-related integrations |
+| `RABBITMQ_URL` | Message broker |
+| `RABBITMQ_EXCHANGE_ANALYTICS` | Analytics exchange name |
+| `RABBITMQ_EXCHANGE_NOTIFICATION` | Notification exchange name |
+| `APPEAL_CONTACT` | Shown in ban messages |

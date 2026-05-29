@@ -183,3 +183,79 @@ func (s *WalletService) ApplyTopupIdempotent(
 	})
 	return outApplied, outBal, txErr
 }
+
+// TransferFareWithPlatformFee debits the passenger (fare + fee), credits the driver (fare),
+// and credits the system wallet (fee) atomically, then runs hook before commit.
+func (s *WalletService) TransferFareWithPlatformFee(
+	ctx context.Context,
+	passengerWalletID, driverWalletID, systemWalletID string,
+	fareAmount, feeAmount decimal.Decimal,
+	hook TransferHook,
+) error {
+	if fareAmount.Cmp(decimal.Zero) <= 0 {
+		return ErrInvalidAmount
+	}
+	if feeAmount.Cmp(decimal.Zero) < 0 {
+		return ErrInvalidAmount
+	}
+	totalDebit := fareAmount.Add(feeAmount)
+	if passengerWalletID == driverWalletID || passengerWalletID == systemWalletID || driverWalletID == systemWalletID {
+		return ErrSameWalletTransfer
+	}
+
+	db := s.WalletRepo.DB()
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		ids := []string{passengerWalletID, driverWalletID, systemWalletID}
+		sortWalletIDs(ids)
+
+		locked := make(map[string]models.Wallet, len(ids))
+		for _, id := range ids {
+			w, err := s.WalletRepo.LockByID(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			locked[id] = w
+		}
+
+		passenger := locked[passengerWalletID]
+		driver := locked[driverWalletID]
+		system := locked[systemWalletID]
+
+		if passenger.Freezed || driver.Freezed || system.Freezed {
+			return ErrWalletFrozen
+		}
+		if passenger.Balance.Cmp(totalDebit) < 0 {
+			return ErrInsufficientFunds
+		}
+
+		now := time.Now().UTC()
+		passenger.Balance = passenger.Balance.Sub(totalDebit)
+		driver.Balance = driver.Balance.Add(fareAmount)
+		system.Balance = system.Balance.Add(feeAmount)
+		passenger.UpdatedAt = now
+		driver.UpdatedAt = now
+		system.UpdatedAt = now
+
+		for _, w := range []models.Wallet{passenger, driver, system} {
+			if err := tx.Save(&w).Error; err != nil {
+				return err
+			}
+		}
+		if hook != nil {
+			if err := hook(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func sortWalletIDs(ids []string) {
+	for i := 0; i < len(ids); i++ {
+		for j := i + 1; j < len(ids); j++ {
+			if ids[j] < ids[i] {
+				ids[i], ids[j] = ids[j], ids[i]
+			}
+		}
+	}
+}

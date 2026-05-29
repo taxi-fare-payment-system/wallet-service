@@ -90,7 +90,14 @@ DO $$
 BEGIN
   CREATE EXTENSION IF NOT EXISTS pgcrypto;
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'wallet_type') THEN
-    CREATE TYPE wallet_type AS ENUM ('passenger', 'driver', 'owner');
+    CREATE TYPE wallet_type AS ENUM ('passenger', 'driver', 'owner', 'system');
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_enum e
+    JOIN pg_type t ON e.enumtypid = t.oid
+    WHERE t.typname = 'wallet_type' AND e.enumlabel = 'system'
+  ) THEN
+    ALTER TYPE wallet_type ADD VALUE 'system';
   END IF;
 END $$;
 `).Error
