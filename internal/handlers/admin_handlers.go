@@ -44,7 +44,8 @@ func (h *AdminHandlers) FreezeWallet(c *gin.Context) {
 		c.JSON(400, server_utils.ErrorResponse{Message: "invalid wallet id"})
 		return
 	}
-	if _, ok := h.requireTrustedAdmin(c); !ok {
+	actorUserID, ok := h.requireTrustedAdmin(c)
+	if !ok {
 		return
 	}
 
@@ -68,6 +69,19 @@ func (h *AdminHandlers) FreezeWallet(c *gin.Context) {
 		c.JSON(404, server_utils.ErrorResponse{Message: "wallet not found"})
 		return
 	}
+
+	emitAudit(c, h.Bus, messaging.AuditEntry{
+		Action:        "wallet.frozen",
+		ActorUserID:   actorUserID,
+		ActorUserRole: strings.ToLower(server_utils.XUserRole(c)),
+		TargetType:    "wallet",
+		TargetID:      walletID,
+		SubCityID:     w.SubCityID,
+		Metadata: map[string]any{
+			"user_id":     w.UserID,
+			"wallet_type": string(w.WalletType),
+		},
+	})
 
 	_ = h.Bus.PublishNotification(c.Request.Context(), "notification.wallet.frozen", map[string]any{
 		"event_id":  uuid.NewString(),
@@ -245,7 +259,8 @@ type updateConfigRequest struct {
 }
 
 func (h *AdminHandlers) UpdateConfig(c *gin.Context) {
-	if _, ok := h.requireTrustedAdmin(c); !ok {
+	actorUserID, ok := h.requireTrustedAdmin(c)
+	if !ok {
 		return
 	}
 	var req updateConfigRequest
@@ -273,5 +288,23 @@ func (h *AdminHandlers) UpdateConfig(c *gin.Context) {
 		c.JSON(500, server_utils.ErrorResponse{Message: "failed to update config"})
 		return
 	}
+
+	var subCityID *uint
+	if sub, ok := server_utils.ParseXSubCity(c); ok {
+		subCityID = &sub
+	}
+	emitAudit(c, h.Bus, messaging.AuditEntry{
+		Action:        "wallet.config_updated",
+		ActorUserID:   actorUserID,
+		ActorUserRole: strings.ToLower(server_utils.XUserRole(c)),
+		TargetType:    "config",
+		TargetID:      req.Key,
+		SubCityID:     subCityID,
+		Metadata: map[string]any{
+			"key":   req.Key,
+			"value": req.Value,
+		},
+	})
+
 	c.JSON(200, map[string]interface{}{"success": true, "key": req.Key, "value": req.Value})
 }

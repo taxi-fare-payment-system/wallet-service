@@ -119,6 +119,20 @@ func (h *TopupHandlers) TopupWallet(c *gin.Context) {
 		return
 	}
 
+	emitAudit(c, h.Bus, messaging.AuditEntry{
+		Action:        "wallet.topup_initiated",
+		ActorUserID:   me.Data.ID,
+		ActorUserRole: "passenger",
+		TargetType:    "wallet",
+		TargetID:      wallet.ID,
+		SubCityID:     wallet.SubCityID,
+		Metadata: map[string]any{
+			"amount":         req.Amount,
+			"transaction_id": out.TransactionID,
+			"currency":       "ETB",
+		},
+	})
+
 	c.JSON(200, topupResponse{
 		TransactionID: out.TransactionID,
 		CheckoutURL:   out.CheckoutURL,
@@ -206,16 +220,31 @@ func (h *TopupHandlers) FinalizeTopup(c *gin.Context) {
 
 	if applied {
 		txID := strings.TrimSpace(req.TransactionID)
+		payer := strings.TrimSpace(req.PayerUserID)
+		payerRole := "passenger"
+		if payer == "" {
+			payer = "system"
+			payerRole = "system"
+		}
+		_ = h.Bus.PublishAuditLog(c.Request.Context(), messaging.AuditEntry{
+			Action:        "wallet.topup_completed",
+			ActorUserID:   payer,
+			ActorUserRole: payerRole,
+			TargetType:    "wallet",
+			TargetID:      walletID,
+			Metadata: map[string]any{
+				"amount":         amt.StringFixed(2),
+				"currency":       currency,
+				"transaction_id": txID,
+				"balance":        newBal.StringFixed(2),
+			},
+		})
 		_ = h.Bus.PublishAnalytics(c.Request.Context(), "analytics.wallet.balance_updated", map[string]any{
 			"wallet_id": walletID,
 			"balance":   newBal.StringFixed(2),
 			"delta":     amt.StringFixed(2),
 			"reason":    "topup",
 		})
-		payer := strings.TrimSpace(req.PayerUserID)
-		if payer == "" {
-			payer = "unknown"
-		}
 		amtStr := amt.StringFixed(2)
 		_ = h.Bus.PublishNotification(c.Request.Context(), "notification.wallet.topup_succeeded", map[string]any{
 			"event_id":  uuid.NewString(),

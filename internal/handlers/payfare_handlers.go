@@ -228,6 +228,30 @@ func (h *PayFareHandlers) PayFare(c *gin.Context) {
 		}
 	}
 
+	auditMeta := map[string]any{
+		"amount":              amountDec.StringFixed(2),
+		"currency":            "ETB",
+		"trip_id":             strings.TrimSpace(req.TripID),
+		"transaction_id":      transferOut.TransactionID,
+		"driver_wallet_id":    driverWallet.ID,
+		"platform_fee":        platformFee.StringFixed(2),
+	}
+	if assistant != "" {
+		auditMeta["assistant_id"] = assistant
+	}
+	auditEntry := messaging.AuditEntry{
+		Action:        "wallet.fare_paid",
+		ActorUserID:   passengerWallet.UserID,
+		ActorUserRole: "passenger",
+		TargetType:    "wallet",
+		TargetID:      passengerWallet.ID,
+		Metadata:      auditMeta,
+	}
+	if req.SubCityID != nil && *req.SubCityID != 0 {
+		auditEntry.SubCityID = req.SubCityID
+	}
+	_ = h.Bus.PublishAuditLog(c.Request.Context(), auditEntry)
+
 	amtStr := amountDec.StringFixed(2)
 	meta := map[string]any{
 		"amount":         amtStr,

@@ -174,6 +174,18 @@ func (h *WalletHandlers) CreateWallet(c *gin.Context) {
 		"wallet_type": string(newWallet.WalletType),
 		"balance":     0,
 	})
+	_ = h.Bus.PublishAuditLog(c.Request.Context(), messaging.AuditEntry{
+		Action:        "wallet.created",
+		ActorUserID:   newWallet.UserID,
+		ActorUserRole: string(newWallet.WalletType),
+		TargetType:    "wallet",
+		TargetID:      newWallet.ID,
+		SubCityID:     newWallet.SubCityID,
+		Metadata: map[string]any{
+			"user_id":     newWallet.UserID,
+			"wallet_type": string(newWallet.WalletType),
+		},
+	})
 
 	c.JSON(201, toWalletResponse(newWallet))
 }

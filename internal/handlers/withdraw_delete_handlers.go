@@ -124,6 +124,7 @@ func (h *WithdrawDeleteHandlers) Withdraw(c *gin.Context) {
 	}
 
 	amt := decimal.NewFromFloat(req.Amount)
+	var withdrawalStatus models.WithdrawalStatus
 	db := h.WalletRepo.DB()
 	err = db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
 		wlt, err := h.WalletRepo.LockByID(c.Request.Context(), tx, walletID)
@@ -186,6 +187,7 @@ func (h *WithdrawDeleteHandlers) Withdraw(c *gin.Context) {
 			Status:    status,
 		}
 		
+		withdrawalStatus = status
 		if h.WithdrawalRepo != nil {
 			return h.WithdrawalRepo.Create(c.Request.Context(), tx, &withdrawal)
 		}
@@ -241,6 +243,27 @@ func (h *WithdrawDeleteHandlers) Withdraw(c *gin.Context) {
 		c.JSON(502, server_utils.ErrorResponse{Message: payErr.Error()})
 		return
 	}
+
+	actorRole := strings.ToLower(server_utils.XUserRole(c))
+	if actorRole == "" {
+		actorRole = string(walletRow.WalletType)
+	}
+	emitAudit(c, h.Bus, messaging.AuditEntry{
+		Action:        "wallet.withdrawal_initiated",
+		ActorUserID:   callerID,
+		ActorUserRole: actorRole,
+		TargetType:    "wallet",
+		TargetID:      walletID,
+		SubCityID:     walletRow.SubCityID,
+		Metadata: map[string]any{
+			"amount":     amt.StringFixed(2),
+			"currency":   "ETB",
+			"method":     strings.TrimSpace(req.Method),
+			"bank_code":  strings.TrimSpace(req.BankCode),
+			"status":     string(withdrawalStatus),
+			"tx_ref":     payOut.TxRef,
+		},
+	})
 
 	wAfter, err := h.WalletRepo.GetByID(c.Request.Context(), walletID)
 	if err == nil {
@@ -330,6 +353,12 @@ func (h *WithdrawDeleteHandlers) DeleteWallet(c *gin.Context) {
 		c.JSON(400, server_utils.ErrorResponse{Message: err.Error()})
 		return
 	}
+
+	emitAudit(c, h.Bus, messaging.AuditEntry{
+		Action:     "wallet.deleted",
+		TargetType: "wallet",
+		TargetID:   walletID,
+	})
 
 	c.Status(204)
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"wallet_service/internal/auth"
+	"wallet_service/internal/messaging"
 	"wallet_service/internal/models"
 	"wallet_service/internal/payment"
 	"wallet_service/internal/repository"
@@ -21,6 +22,7 @@ type TransferHandlers struct {
 	WalletService *services.WalletService
 	PaymentClient *payment.Client
 	AuthClient    *auth.Client
+	Bus           *messaging.Publisher
 }
 
 type transferRequest struct {
@@ -133,6 +135,23 @@ func (h *TransferHandlers) Transfer(c *gin.Context) {
 		c.JSON(400, server_utils.ErrorResponse{Message: err.Error()})
 		return
 	}
+
+	emitAudit(c, h.Bus, messaging.AuditEntry{
+		Action:        "wallet.transfer_completed",
+		ActorUserID:   fromWallet.UserID,
+		ActorUserRole: "passenger",
+		TargetType:    "wallet",
+		TargetID:      fromWallet.ID,
+		SubCityID:     fromWallet.SubCityID,
+		Metadata: map[string]any{
+			"amount":              amountDec.StringFixed(2),
+			"currency":            "ETB",
+			"to_wallet_id":        toWallet.ID,
+			"to_user_id":          toWallet.UserID,
+			"to_phone_number":     toPhone,
+			"transaction_id":      transferOut.TransactionID,
+		},
+	})
 
 	c.JSON(200, gin.H{
 		"success":        true,
