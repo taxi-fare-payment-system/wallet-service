@@ -118,6 +118,7 @@ func main() {
 		WithdrawalRepo: withdrawalRepo,
 		ConfigRepo:     configRepo,
 		PaymentClient:  paymentClient,
+		AuthClient:     authClient,
 		Bus:            bus,
 	}
 	assistantHandlers := &handlers.AssistantHandlers{PaymentClient: paymentClient}

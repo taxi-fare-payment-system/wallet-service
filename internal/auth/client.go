@@ -37,6 +37,8 @@ type MeResponse struct {
 		ID          string `json:"id"`
 		Phone       string `json:"phone"`
 		DisplayName string `json:"display_name"`
+		Role        string `json:"role"`
+		TotpEnabled bool   `json:"totp_enabled"`
 	} `json:"data"`
 }
 

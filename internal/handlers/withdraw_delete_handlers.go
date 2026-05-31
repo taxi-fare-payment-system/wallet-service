@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"wallet_service/internal/auth"
 	"wallet_service/internal/messaging"
 	"wallet_service/internal/models"
 	"wallet_service/internal/payment"
@@ -23,6 +24,7 @@ type WithdrawDeleteHandlers struct {
 	WithdrawalRepo *repository.WithdrawalRepository
 	ConfigRepo     *repository.ConfigRepository
 	PaymentClient  *payment.Client
+	AuthClient     *auth.Client
 	Bus            *messaging.Publisher
 }
 
@@ -107,12 +109,36 @@ func (h *WithdrawDeleteHandlers) Withdraw(c *gin.Context) {
 		c.JSON(500, server_utils.ErrorResponse{Message: "internal error"})
 		return
 	}
-	if walletRow.UserID != callerID {
+
+	ctx := server_utils.WithAuthBearer(c.Request.Context(), c.GetHeader("Authorization"))
+	isSystemWallet := walletRow.WalletType.IsSystem()
+	if isSystemWallet {
+		if !server_utils.IsSuperadminRole(server_utils.XUserRole(c)) {
+			c.JSON(404, server_utils.ErrorResponse{Message: "wallet not found"})
+			return
+		}
+		if h.AuthClient == nil {
+			c.JSON(502, server_utils.ErrorResponse{Message: "auth client not configured"})
+			return
+		}
+		me, err := h.AuthClient.GetMe(ctx)
+		if err != nil {
+			var api *auth.APIError
+			if errors.As(err, &api) && (api.StatusCode == 401 || api.StatusCode == 403) {
+				c.JSON(401, server_utils.ErrorResponse{Message: "authentication error"})
+				return
+			}
+			c.JSON(502, server_utils.ErrorResponse{Message: err.Error()})
+			return
+		}
+		if !me.Data.TotpEnabled {
+			c.JSON(403, server_utils.ErrorResponse{Message: "two-factor authentication is required for system wallet withdrawal"})
+			return
+		}
+	} else if walletRow.UserID != callerID {
 		c.JSON(403, server_utils.ErrorResponse{Message: "forbidden"})
 		return
 	}
-
-	ctx := server_utils.WithAuthBearer(c.Request.Context(), c.GetHeader("Authorization"))
 	banks, err := h.PaymentClient.GetChapaBanks(ctx)
 	if err != nil {
 		c.JSON(502, server_utils.ErrorResponse{Message: err.Error()})
@@ -134,7 +160,9 @@ func (h *WithdrawDeleteHandlers) Withdraw(c *gin.Context) {
 		if wlt.Freezed {
 			return errFrozen
 		}
-		if wlt.WalletType != models.WalletTypeDriver && wlt.WalletType != models.WalletTypeOwner {
+		switch wlt.WalletType {
+		case models.WalletTypeDriver, models.WalletTypeOwner, models.WalletTypeSystem:
+		default:
 			return errWithdrawType
 		}
 		if wlt.Balance.Cmp(amt) < 0 {
@@ -146,10 +174,10 @@ func (h *WithdrawDeleteHandlers) Withdraw(c *gin.Context) {
 				return errOwnerMin
 			}
 		}
-		// Check withdrawal limits
+		// Check withdrawal limits (not applied to system wallet treasury withdrawals).
 		status := models.WithdrawalStatusCompleted
 		wltUUID, _ := uuid.Parse(wlt.ID)
-		if h.ConfigRepo != nil && h.WithdrawalRepo != nil {
+		if !wlt.WalletType.IsSystem() && h.ConfigRepo != nil && h.WithdrawalRepo != nil {
 			limitStr, _ := h.ConfigRepo.Get(c.Request.Context(), "daily_withdrawal_limit")
 			thresholdStr, _ := h.ConfigRepo.Get(c.Request.Context(), "auto_approve_threshold")
 
@@ -248,21 +276,27 @@ func (h *WithdrawDeleteHandlers) Withdraw(c *gin.Context) {
 	if actorRole == "" {
 		actorRole = string(walletRow.WalletType)
 	}
+	auditAction := "wallet.withdrawal_initiated"
+	auditMeta := map[string]any{
+		"amount":     amt.StringFixed(2),
+		"currency":   "ETB",
+		"method":     strings.TrimSpace(req.Method),
+		"bank_code":  strings.TrimSpace(req.BankCode),
+		"status":     string(withdrawalStatus),
+		"tx_ref":     payOut.TxRef,
+	}
+	if isSystemWallet {
+		auditAction = "wallet.system_withdrawal_initiated"
+		auditMeta["wallet_type"] = string(models.WalletTypeSystem)
+	}
 	emitAudit(c, h.Bus, messaging.AuditEntry{
-		Action:        "wallet.withdrawal_initiated",
+		Action:        auditAction,
 		ActorUserID:   callerID,
 		ActorUserRole: actorRole,
 		TargetType:    "wallet",
 		TargetID:      walletID,
 		SubCityID:     walletRow.SubCityID,
-		Metadata: map[string]any{
-			"amount":     amt.StringFixed(2),
-			"currency":   "ETB",
-			"method":     strings.TrimSpace(req.Method),
-			"bank_code":  strings.TrimSpace(req.BankCode),
-			"status":     string(withdrawalStatus),
-			"tx_ref":     payOut.TxRef,
-		},
+		Metadata:      auditMeta,
 	})
 
 	wAfter, err := h.WalletRepo.GetByID(c.Request.Context(), walletID)

@@ -69,13 +69,14 @@ All paths use prefix **`/api/v1/wallet`**.
 - One platform wallet exists: `user_id` = `__system__`, `wallet_type` = `system`.
 - Created at startup / migration; not creatable via `POST /api/v1/wallet`.
 - **Visible only to `superadmin`** (direct `GET`, `GET /users/...?type=system`, and `GET /admin/wallets`). Other roles receive **404** `wallet not found` for system wallets.
-- Credited on each successful **pay-fare** by the configured platform fee (see [Admin configs](#admin-configs)).
+- Credited on each successful **pay-fare** by the configured platform fee (see [Admin configs](#admin-configs)). When the fee is > 0, a Payment `POST /api/v1/payments/transfers` record is also created (passenger wallet → system wallet) in the same atomic hook as the fare transfer.
+- **Withdrawal**: only **`superadmin`** may withdraw from the system wallet, and only when the caller’s Auth account has **`totp_enabled: true`** (see Auth `GET /api/v1/auth/me`). Emits audit action `wallet.system_withdrawal_initiated`. Daily withdrawal limit / auto-approve threshold do **not** apply to system wallet withdrawals.
 
 ### Integrations (RabbitMQ)
 
 | Exchange (env default) | Purpose |
 | --- | --- |
-| `analytics_exchange` (`ANALYTICS_EXCHANGE`) | `analytics.wallet.created`, `analytics.wallet.balance_updated` |
+| `analytics_exchange` (`ANALYTICS_EXCHANGE`) | `analytics.wallet.created`, `analytics.wallet.balance_updated`, audit trail `analytics.audit.recorded` |
 | `notification.exchange` (`NOTIFICATION_EXCHANGE`) | wallet lifecycle / billing notifications |
 
 Topics include: `notification.wallet.topup_succeeded`, `notification.wallet.pay_fare_succeeded`, `notification.wallet.frozen`, `notification.wallet.withdrawal_initiated`, `notification.wallet.transfer_sent`, `notification.wallet.transfer_received`.
@@ -244,8 +245,9 @@ Atomically:
 1. Debits passenger wallet: **fare + platform fee**
 2. Credits driver wallet: **fare**
 3. Credits system wallet: **platform fee**
-4. Records fare in Payment Service (hook; amount = fare only, fee is wallet-internal)
-5. Publishes analytics / notification events
+4. Records fare in Payment Service via `POST /api/v1/payments/transfers` (passenger → driver; amount = fare only)
+5. When platform fee > 0, records a second Payment transfer (passenger → system wallet; amount = platform fee) with trip / sub-city / assistant context
+6. Publishes analytics, audit (`wallet.fare_paid`), and notification events
 
 **Platform fee**: config key `fare_platform_fee` (default `0.05` ETB). Superadmin updates via [Admin configs](#admin-configs).
 
@@ -286,6 +288,8 @@ Atomically:
 | 502 | `trip client not configured`, payment/trip errors |
 
 Passenger balance must cover **fare + `fare_platform_fee`**.
+
+**Audit metadata** (`wallet.fare_paid`): includes `platform_fee`, `system_wallet_id`, and `platform_fee_transaction_id` when a fee transfer was recorded.
 
 ---
 
@@ -404,13 +408,27 @@ Proxies Payment `GET /api/v1/payments/transactions`.
 
 ### `PUT /api/v1/wallet/:wallet_id/withdraw`
 
-Driver or owner wallet payout via Payment + local withdrawal row.
+Bank payout via Payment + local withdrawal row.
+
+#### Driver / owner wallets
 
 **Headers**: `X-User-ID` (must own wallet), `Authorization` (Payment).
 
 **Config** (optional): `daily_withdrawal_limit`, `auto_approve_threshold` — see [Admin configs](#admin-configs).
 
-**Request**:
+#### System wallet
+
+**Headers**: `X-User-ID`, `X-User-Role` = `superadmin`, `Authorization` (Payment + Auth `GET /me` for 2FA check).
+
+- Caller must **not** own the wallet (`user_id` is `__system__`); access is by role instead.
+- **`totp_enabled`** must be `true` on the superadmin account; otherwise **403** `two-factor authentication is required for system wallet withdrawal`.
+- Non-superadmin callers receive **404** `wallet not found` (same visibility rule as other system-wallet routes).
+- `daily_withdrawal_limit` and `auto_approve_threshold` are **not** applied.
+- Emits audit action **`wallet.system_withdrawal_initiated`** (routing key `analytics.audit.recorded`).
+
+Driver/owner withdrawals emit **`wallet.withdrawal_initiated`**.
+
+#### Request (all wallet types)
 
 ```json
 {
@@ -435,7 +453,16 @@ Driver or owner wallet payout via Payment + local withdrawal row.
 }
 ```
 
-**Errors**: 401 missing user; 400 validation / limit / owner minimum balance; 403 forbidden / frozen / wrong type; 404 wallet; 422 insufficient balance; 502 payment (may reverse debit on 5xx).
+**Errors** (non-exhaustive):
+
+| Status | Message |
+| --- | --- |
+| 401 | missing user id, `authentication error` (system wallet 2FA lookup) |
+| 400 | validation, daily limit, owner minimum balance (`owner wallet must keep minimum balance of 100 ETB`) |
+| 403 | `forbidden` (not wallet owner), `wallet is frozen`, `withdraw not allowed for this wallet type`, `two-factor authentication is required for system wallet withdrawal` |
+| 404 | `wallet not found` (includes non-superadmin access to system wallet) |
+| 422 | `insufficient balance` |
+| 502 | payment error (may reverse debit on 5xx), `auth client not configured` |
 
 ---
 

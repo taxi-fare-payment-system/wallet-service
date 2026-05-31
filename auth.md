@@ -38,6 +38,7 @@ Returned by `GET /me`, login, register, admin user APIs, and `PATCH /me/avatar`.
   "language": "en",
   "push_enabled": true,
   "biometric_enabled": false,
+  "totp_enabled": false,
   "vehicle_type": "",
   "plate_number": "",
   "national_id": "",
@@ -54,6 +55,7 @@ Returned by `GET /me`, login, register, admin user APIs, and `PATCH /me/avatar`.
   - `language` — UI language code (default `"en"`).
   - `push_enabled` — whether push notifications are enabled (default `true`). Update via `PATCH /preferences`.
   - `biometric_enabled` — whether biometric login is enabled (default `false`).
+  - `totp_enabled` — whether TOTP authenticator-app 2FA is enabled (default `false`).
 
 ## Public Endpoints
 
@@ -99,7 +101,15 @@ Returned by `GET /me`, login, register, admin user APIs, and `PATCH /me/avatar`.
 }
 ```
 - `role` is required. Allowed values: `passenger`, `driver`, `owner`, `admin`, `driver-assistant`, `superadmin`.
-- Success payload includes `user` (profile fields) and `token` (JWT string).
+- When **`totp_enabled`** is `true` for the account, the response is a 2FA challenge instead of a JWT:
+```json
+{
+  "user": { "...": "UserResponse" },
+  "requires_two_factor": true,
+  "two_factor_token": "<short-lived challenge token>"
+}
+```
+- When 2FA is off, success payload includes `user` (profile fields) and `token` (JWT string).
 - Returns `403` on banned users:
 ```json
 {
@@ -107,6 +117,44 @@ Returned by `GET /me`, login, register, admin user APIs, and `PATCH /me/avatar`.
   "message": "Your account has been suspended. Contact support at support@example.com."
 }
 ```
+
+### `POST /api/v1/auth/2fa/verify-login`
+- Completes login after a 2FA challenge (step 2 of the login flow). **No JWT required.**
+- Request — provide **either** `code` (6-digit authenticator app code) **or** `recovery_code`:
+```json
+{
+  "two_factor_token": "<token from login response>",
+  "code": "123456"
+}
+```
+```json
+{
+  "two_factor_token": "<token from login response>",
+  "recovery_code": "ABCD-EFGH"
+}
+```
+- `two_factor_token` expires after **5 minutes**.
+- Response `200`: `LoginResponse` with `user` and `token` (full JWT).
+- Response `401` for invalid/expired token, invalid code, or invalid recovery code.
+- **Recovery codes are single-use** — a used code is removed from the account.
+
+### `POST /api/v1/auth/2fa/recover`
+- Logs in using a **recovery code** when the user no longer has access to their authenticator app. **No JWT required.** This is a single-step alternative to `login` + `verify-login` with a recovery code.
+- Request:
+```json
+{
+  "phone": "0912345678",
+  "password": "password123",
+  "role": "passenger",
+  "recovery_code": "ABCD-EFGH"
+}
+```
+- `role` is required (same allowed values as login).
+- Validates `(phone, role)`, password, and recovery code together. Returns a generic **401** `invalid credentials or recovery code` on any mismatch (to limit enumeration).
+- Response `200`: `LoginResponse` with `user` and `token` (full JWT).
+- Response `400` when 2FA is not enabled on the account.
+- Response `403` on banned users (same `ACCOUNT_BANNED` shape as login).
+- **Recovery codes are single-use** — the redeemed code is removed from the account.
 
 ### `POST /api/v1/auth/verify-phone`
 - Verifies phone OTP for a specific role account (same handler as `POST /api/v1/auth/verify-otp`).
@@ -215,6 +263,55 @@ Returned by `GET /me`, login, register, admin user APIs, and `PATCH /me/avatar`.
 }
 ```
 - Response `200`: `{ "status": "success", "message": "Preferences updated successfully" }` (no `data` body).
+
+## Two-Factor Authentication (TOTP authenticator app)
+
+Uses [`github.com/pquerna/otp`](https://github.com/pquerna/otp) (compatible with Google Authenticator, Authy, etc.). Configure the issuer name shown in authenticator apps with `TOTP_ISSUER` (default `TaxiFare`).
+
+### Enable flow (authenticated JWT required)
+
+1. **`POST /api/v1/auth/2fa/setup`** — generate a TOTP secret and QR payload (does not enable 2FA yet).
+   - Response `200`:
+   ```json
+   {
+     "secret": "BASE32SECRET",
+     "otpauth_url": "otpauth://totp/TaxiFare:0912345678?..."
+   }
+   ```
+   - Scan `otpauth_url` in an authenticator app, or enter `secret` manually.
+
+2. **`POST /api/v1/auth/2fa/enable`** — confirm with a 6-digit code from the app; enables 2FA and returns recovery codes.
+   - Request: `{ "code": "123456" }`
+   - Response `200`:
+   ```json
+   {
+     "recovery_codes": ["ABCD-EFGH", "IJKL-MNOP", "..."]
+   }
+   ```
+   - **10 recovery codes** are returned once. Store them securely; they are bcrypt-hashed in the database.
+
+### Manage (authenticated JWT required)
+
+- **`GET /api/v1/auth/2fa/status`** — `{ "enabled": true, "recovery_codes_left": 8 }`
+- **`POST /api/v1/auth/2fa/disable`** — turn off 2FA. Requires password plus **either** authenticator `code` **or** `recovery_code`:
+```json
+{
+  "password": "password123",
+  "code": "123456"
+}
+```
+- **`POST /api/v1/auth/2fa/recovery-codes/regenerate`** — issue new recovery codes (invalidates old ones). Requires password and authenticator `code`:
+```json
+{
+  "password": "password123",
+  "code": "123456"
+}
+```
+- Response `200`: `{ "recovery_codes": ["...", "..."] }`
+
+### Login with 2FA (public)
+
+See **`POST /api/v1/auth/login`**, **`POST /api/v1/auth/2fa/verify-login`**, and **`POST /api/v1/auth/2fa/recover`** above.
 
 ## Driver Profile and Reviews (any authenticated JWT)
 
@@ -498,3 +595,4 @@ Published topic examples:
 | `RABBITMQ_EXCHANGE_ANALYTICS` | Analytics exchange name |
 | `RABBITMQ_EXCHANGE_NOTIFICATION` | Notification exchange name |
 | `APPEAL_CONTACT` | Shown in ban messages |
+| `TOTP_ISSUER` | Name shown in authenticator apps when scanning 2FA QR (default `TaxiFare`) |
