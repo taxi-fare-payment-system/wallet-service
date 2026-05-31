@@ -20,14 +20,6 @@ const WalletMigrationsTable = "wallet_migrations"
 
 // EnsureSchema applies SQL migrations and then enforces model tables.
 func EnsureSchema(cfg config.Config, database DB, logger *slog.Logger) error {
-	if err := ensureWalletTypeEnum(database); err != nil {
-		return fmt.Errorf("ensure wallet_type enum: %w", err)
-	}
-
-	if err := ensureWalletsTable(database); err != nil {
-		return fmt.Errorf("ensure wallets table: %w", err)
-	}
-
 	if err := ApplySQLMigrations(cfg, database, logger); err != nil {
 		return fmt.Errorf("sql migrations: %w", err)
 	}
@@ -81,16 +73,6 @@ func ApplySQLMigrations(cfg config.Config, database DB, logger *slog.Logger) err
 			slog.String("state", "empty"),
 			slog.String("table", WalletMigrationsTable),
 		)
-		if baseline, baselineErr := detectBaselineVersion(database); baselineErr != nil {
-			return fmt.Errorf("detect migration baseline: %w", baselineErr)
-		} else if baseline > 0 {
-			logger.Info("migration_baseline_detected", slog.Uint64("version", uint64(baseline)))
-			if forceErr := m.Force(int(baseline)); forceErr != nil {
-				return fmt.Errorf("force baseline migration version %d: %w", baseline, forceErr)
-			}
-			version = baseline
-			dirty = false
-		}
 	default:
 		return fmt.Errorf("read migration version: %w", err)
 	}
@@ -99,6 +81,10 @@ func ApplySQLMigrations(cfg config.Config, database DB, logger *slog.Logger) err
 		if err := clearDirtyMigration(m, int(version), logger); err != nil {
 			return err
 		}
+	}
+
+	if err := reconcileMigrationVersion(m, database, logger); err != nil {
+		return err
 	}
 
 	if err := runMigrationsUp(m, logger); err != nil {
@@ -153,6 +139,165 @@ func RunMigrationsDown(cfg config.Config, database DB, logger *slog.Logger) erro
 	return nil
 }
 
+func reconcileMigrationVersion(m *migrate.Migrate, database DB, logger *slog.Logger) error {
+	recorded, _, err := m.Version()
+	if errors.Is(err, migrate.ErrNilVersion) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read migration version for reconcile: %w", err)
+	}
+
+	actual, err := detectActualSchemaVersion(database)
+	if err != nil {
+		return fmt.Errorf("detect actual schema version: %w", err)
+	}
+
+	if actual >= recorded {
+		return nil
+	}
+
+	logger.Warn("migration_version_ahead_of_schema",
+		slog.Uint64("recorded", uint64(recorded)),
+		slog.Uint64("actual", uint64(actual)),
+	)
+	if err := m.Force(int(actual)); err != nil {
+		return fmt.Errorf("force migration version from %d to %d: %w", recorded, actual, err)
+	}
+
+	return nil
+}
+
+func detectActualSchemaVersion(database DB) (uint, error) {
+	wallets, err := tableExists(database, "wallets")
+	if err != nil {
+		return 0, err
+	}
+	if !wallets {
+		return 0, nil
+	}
+
+	topupCredits, err := tableExists(database, "wallet_topup_credits")
+	if err != nil {
+		return 0, err
+	}
+	if !topupCredits {
+		return 1, nil
+	}
+
+	userTypeIndex, err := indexExists(database, "wallets_user_id_wallet_type_unique")
+	if err != nil {
+		return 0, err
+	}
+	if !userTypeIndex {
+		return 2, nil
+	}
+
+	withdrawals, err := tableExists(database, "withdrawals")
+	if err != nil {
+		return 0, err
+	}
+	if !withdrawals {
+		return 3, nil
+	}
+
+	systemConfigs, err := tableExists(database, "system_configs")
+	if err != nil {
+		return 0, err
+	}
+	if !systemConfigs {
+		return 4, nil
+	}
+
+	dailyLimit, err := configKeyExists(database, "daily_withdrawal_limit")
+	if err != nil {
+		return 0, err
+	}
+	if !dailyLimit {
+		return 4, nil
+	}
+
+	withdrawalsUUID, err := columnIsUUID(database, "withdrawals", "id")
+	if err != nil {
+		return 0, err
+	}
+	if !withdrawalsUUID {
+		return 5, nil
+	}
+
+	farePlatformFee, err := configKeyExists(database, "fare_platform_fee")
+	if err != nil {
+		return 0, err
+	}
+	systemWallet, err := systemWalletExists(database)
+	if err != nil {
+		return 0, err
+	}
+	if !farePlatformFee || !systemWallet {
+		return 8, nil
+	}
+
+	return 10, nil
+}
+
+func tableExists(database DB, name string) (bool, error) {
+	var exists bool
+	err := database.SQL.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.tables
+			WHERE table_schema = 'public' AND table_name = $1
+		)`, name).Scan(&exists)
+	return exists, err
+}
+
+func indexExists(database DB, name string) (bool, error) {
+	var exists bool
+	err := database.SQL.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_indexes
+			WHERE schemaname = 'public' AND indexname = $1
+		)`, name).Scan(&exists)
+	return exists, err
+}
+
+func columnIsUUID(database DB, table, column string) (bool, error) {
+	var exists bool
+	err := database.SQL.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = 'public'
+			  AND table_name = $1
+			  AND column_name = $2
+			  AND udt_name = 'uuid'
+		)`, table, column).Scan(&exists)
+	return exists, err
+}
+
+func configKeyExists(database DB, key string) (bool, error) {
+	exists, err := tableExists(database, "system_configs")
+	if err != nil || !exists {
+		return false, err
+	}
+
+	var found bool
+	err = database.SQL.QueryRow(`SELECT EXISTS (SELECT 1 FROM system_configs WHERE key = $1)`, key).Scan(&found)
+	return found, err
+}
+
+func systemWalletExists(database DB) (bool, error) {
+	var exists bool
+	err := database.SQL.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM wallets
+			WHERE user_id = '__system__' AND wallet_type = 'system'::wallet_type
+		)`).Scan(&exists)
+	return exists, err
+}
+
 func runMigrationsUp(m *migrate.Migrate, logger *slog.Logger) error {
 	return runMigrationsUpWithRetry(m, logger, 0)
 }
@@ -198,90 +343,6 @@ func clearDirtyMigration(m *migrate.Migrate, version int, logger *slog.Logger) e
 	return nil
 }
 
-func detectBaselineVersion(database DB) (uint, error) {
-	checks := []struct {
-		version uint
-		query   string
-	}{
-		{
-			version: 10,
-			query: `SELECT EXISTS (
-				SELECT 1
-				FROM wallets
-				WHERE wallet_type = 'system'::wallet_type
-			)`,
-		},
-		{
-			version: 8,
-			query: `SELECT EXISTS (
-				SELECT 1
-				FROM information_schema.columns
-				WHERE table_schema = 'public'
-				  AND table_name = 'withdrawals'
-				  AND column_name = 'id'
-				  AND udt_name = 'uuid'
-			)`,
-		},
-		{
-			version: 5,
-			query: `SELECT EXISTS (
-				SELECT 1
-				FROM information_schema.tables
-				WHERE table_schema = 'public'
-				  AND table_name = 'system_configs'
-			)`,
-		},
-		{
-			version: 4,
-			query: `SELECT EXISTS (
-				SELECT 1
-				FROM information_schema.tables
-				WHERE table_schema = 'public'
-				  AND table_name = 'withdrawals'
-			)`,
-		},
-		{
-			version: 3,
-			query: `SELECT EXISTS (
-				SELECT 1
-				FROM pg_indexes
-				WHERE schemaname = 'public'
-				  AND indexname = 'wallets_user_id_wallet_type_unique'
-			)`,
-		},
-		{
-			version: 2,
-			query: `SELECT EXISTS (
-				SELECT 1
-				FROM information_schema.tables
-				WHERE table_schema = 'public'
-				  AND table_name = 'wallet_topup_credits'
-			)`,
-		},
-		{
-			version: 1,
-			query: `SELECT EXISTS (
-				SELECT 1
-				FROM information_schema.tables
-				WHERE table_schema = 'public'
-				  AND table_name = 'wallets'
-			)`,
-		},
-	}
-
-	for _, check := range checks {
-		var exists bool
-		if err := database.SQL.QueryRow(check.query).Scan(&exists); err != nil {
-			return 0, fmt.Errorf("baseline check version %d: %w", check.version, err)
-		}
-		if exists {
-			return check.version, nil
-		}
-	}
-
-	return 0, nil
-}
-
 func parseDirtyVersion(message string) (int, bool) {
 	re := regexp.MustCompile(`(?i)dirty database version (\d+)`)
 	match := re.FindStringSubmatch(message)
@@ -293,38 +354,4 @@ func parseDirtyVersion(message string) (int, bool) {
 		return 0, false
 	}
 	return version, true
-}
-
-func ensureWalletTypeEnum(database DB) error {
-	return database.Gorm.Exec(`
-DO $$
-BEGIN
-  CREATE EXTENSION IF NOT EXISTS pgcrypto;
-  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'wallet_type') THEN
-    CREATE TYPE wallet_type AS ENUM ('passenger', 'driver', 'owner', 'system');
-  END IF;
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_enum e
-    JOIN pg_type t ON e.enumtypid = t.oid
-    WHERE t.typname = 'wallet_type' AND e.enumlabel = 'system'
-  ) THEN
-    ALTER TYPE wallet_type ADD VALUE 'system';
-  END IF;
-END $$;
-`).Error
-}
-
-func ensureWalletsTable(database DB) error {
-	return database.Gorm.Exec(`
-CREATE TABLE IF NOT EXISTS wallets (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id      TEXT NOT NULL,
-  wallet_type  wallet_type NOT NULL,
-  sub_city_id  BIGINT NULL,
-  freezed      BOOLEAN NOT NULL DEFAULT FALSE,
-  balance      NUMERIC(12,2) NOT NULL DEFAULT 0,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-`).Error
 }

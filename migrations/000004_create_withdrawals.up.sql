@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS withdrawals (
-    id BIGSERIAL PRIMARY KEY,
-    wallet_id BIGINT NOT NULL,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    wallet_id UUID NOT NULL,
     amount NUMERIC(12, 2) NOT NULL,
     fee NUMERIC(12, 2) NOT NULL DEFAULT 0,
     net_amount NUMERIC(12, 2) NOT NULL,
@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS withdrawals (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_wallet
-      FOREIGN KEY(wallet_id) 
+      FOREIGN KEY(wallet_id)
       REFERENCES wallets(id)
       ON DELETE CASCADE
 );
