@@ -66,7 +66,7 @@ func ApplySQLMigrations(cfg config.Config, database DB, logger *slog.Logger) err
 	if err != nil {
 		return err
 	}
-	defer closeMigrate(m, logger)
+	// Do not call m.Close(): the postgres driver closes the shared *sql.DB passed via WithInstance.
 
 	version, dirty, err := m.Version()
 	switch {
@@ -120,7 +120,7 @@ func RunMigrationsDown(cfg config.Config, database DB, logger *slog.Logger) erro
 	if err != nil {
 		return err
 	}
-	defer closeMigrate(m, logger)
+	// Do not call m.Close(): the postgres driver closes the shared *sql.DB passed via WithInstance.
 
 	version, dirty, verErr := m.Version()
 	switch {
@@ -196,16 +196,6 @@ func clearDirtyMigration(m *migrate.Migrate, version int, logger *slog.Logger) e
 		return fmt.Errorf("force dirty migration version %d: %w", version, err)
 	}
 	return nil
-}
-
-func closeMigrate(m *migrate.Migrate, logger *slog.Logger) {
-	sourceErr, dbErr := m.Close()
-	if sourceErr != nil {
-		logger.Warn("migration_close_source_failed", slog.Any("error", sourceErr))
-	}
-	if dbErr != nil {
-		logger.Warn("migration_close_database_failed", slog.Any("error", dbErr))
-	}
 }
 
 func detectBaselineVersion(database DB) (uint, error) {
