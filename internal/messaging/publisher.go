@@ -3,12 +3,25 @@ package messaging
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
+
+func exchangeFromEnv(explicit string, keys []string, fallback string) string {
+	if s := strings.TrimSpace(explicit); s != "" {
+		return s
+	}
+	for _, key := range keys {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	return fallback
+}
 
 type Publisher struct {
 	conn                 *amqp.Connection
@@ -31,10 +44,16 @@ func NewPublisher(amqpURL, analyticsExchange, notificationExchange string) (*Pub
 		return nil, err
 	}
 	p := &Publisher{
-		conn:                 conn,
-		ch:                   ch,
-		analyticsExchange:    strings.TrimSpace(analyticsExchange),
-		notificationExchange: strings.TrimSpace(notificationExchange),
+		conn: conn,
+		ch:   ch,
+		analyticsExchange: exchangeFromEnv(analyticsExchange,
+			[]string{"ANALYTICS_EXCHANGE", "RABBITMQ_EXCHANGE_ANALYTICS"},
+			"analytics_exchange",
+		),
+		notificationExchange: exchangeFromEnv(notificationExchange,
+			[]string{"NOTIFICATION_EXCHANGE", "RABBITMQ_EXCHANGE_NOTIFICATION"},
+			"notification_exchange",
+		),
 	}
 	if p.analyticsExchange != "" {
 		if err := ch.ExchangeDeclare(

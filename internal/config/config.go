@@ -44,8 +44,14 @@ func Load() (Config, error) {
 		HTTPClientTimeout:     getenvDurationDefault("HTTP_CLIENT_TIMEOUT", 10*time.Second),
 		TripServiceBaseURL:    getenvAnyDefault([]string{"SERVICE_TRIP_URL", "TRIP_SERVICE_BASE_URL"}, ""),
 		RabbitMQURL:           getenvDefault("RABBITMQ_URL", ""),
-		AnalyticsExchange:     getenvDefault("ANALYTICS_EXCHANGE", "analytics_exchange"),
-		NotificationExchange:  getenvDefault("NOTIFICATION_EXCHANGE", "notification_exchange"),
+		AnalyticsExchange: getenvAnyDefault(
+			[]string{"ANALYTICS_EXCHANGE", "RABBITMQ_EXCHANGE_ANALYTICS"},
+			"analytics_exchange",
+		),
+		NotificationExchange: getenvAnyDefault(
+			[]string{"NOTIFICATION_EXCHANGE", "RABBITMQ_EXCHANGE_NOTIFICATION"},
+			"notification_exchange",
+		),
 		DBMaxOpenConns:        getenvIntDefault("DB_MAX_OPEN_CONNS", 25),
 		DBMaxIdleConns:        getenvIntDefault("DB_MAX_IDLE_CONNS", 25),
 		DBConnMaxIdle:         getenvDurationDefault("DB_CONN_MAX_IDLE", 5*time.Minute),
