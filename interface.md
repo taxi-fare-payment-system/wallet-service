@@ -12,7 +12,7 @@ All paths use prefix **`/api/v1/wallet`**.
 | `GET` | `/readyz` |
 | `GET` | `/banks/chapa` |
 | `GET` | `/assistant/:assistantId/earnings` |
-| `GET` | `/transactions` |
+| `GET` | `/transactions` | 
 | `POST` | `/` |
 | `GET` | `/users/:userId` |
 | `GET` | `/:wallet_id` |
