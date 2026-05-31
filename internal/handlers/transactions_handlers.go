@@ -87,6 +87,11 @@ func (h *TransactionsHandlers) ListTransactions(c *gin.Context) {
 				c.JSON(403, server_utils.ErrorResponse{Message: "forbidden"})
 				return
 			}
+			var authErr *auth.APIError
+			if errors.As(err, &authErr) {
+				c.JSON(authErr.StatusCode, server_utils.ErrorResponse{Message: authErr.Message})
+				return
+			}
 			c.JSON(500, server_utils.ErrorResponse{Message: "internal error"})
 			return
 		}
@@ -139,7 +144,7 @@ func (h *TransactionsHandlers) resolveCallerWalletID(c *gin.Context, userID stri
 	ownerID := userID
 	if strings.ToLower(strings.TrimSpace(role)) == "driver-assistant" {
 		if h.AuthClient == nil {
-			return "", errors.New("auth client not configured")
+			return "", errNoWalletForRole
 		}
 		driverID, err := h.AuthClient.GetDriverByAssistant(c.Request.Context(), userID)
 		if err != nil {
@@ -185,12 +190,12 @@ func (h *TransactionsHandlers) walletOwnedByUser(c *gin.Context, callerUserID st
 	}
 	// Allow driver-assistant to access the driver's wallet
 	role := strings.ToLower(strings.TrimSpace(server_utils.XUserRole(c)))
-	if role == "driver-assistant" && h.AuthClient != nil {
-		driverID, err := h.AuthClient.GetDriverByAssistant(c.Request.Context(), callerUserID)
-		if err != nil {
-			return false
-		}
-		return w.UserID == driverID
+	if role != "driver-assistant" || h.AuthClient == nil {
+		return false
 	}
-	return false
+	driverID, err := h.AuthClient.GetDriverByAssistant(c.Request.Context(), callerUserID)
+	if err != nil {
+		return false
+	}
+	return w.UserID == driverID
 }
