@@ -242,12 +242,11 @@ Payment callback; idempotent credit.
 
 Atomically:
 
-1. Debits passenger wallet: **fare + platform fee**
-2. Credits driver wallet: **fare**
-3. Credits system wallet: **platform fee**
-4. Records fare in Payment Service via `POST /api/v1/payments/transfers` (passenger → driver; amount = fare only)
-5. When platform fee > 0, records a second Payment transfer (passenger → system wallet; amount = platform fee) with trip / sub-city / assistant context
-6. Publishes analytics, audit (`wallet.fare_paid`), and notification events
+1. Debits passenger wallet: **fare + platform fee** (e.g. 20.07 ETB total when fare is 20 and fee is 0.07)
+2. Credits driver wallet: **fare** only (20 ETB)
+3. Credits system wallet: **platform fee** only (0.07 ETB)
+4. Records one Payment transfer (passenger → driver) with `amount` = fare and optional `platform_fee` + `system_wallet_id`; Payment Service persists the passenger ledger line as **fare + fee** and a linked platform-fee credit on the system wallet (no separate passenger → system transfer)
+5. Publishes analytics, audit (`wallet.fare_paid`), and notification events
 
 **Platform fee**: config key `fare_platform_fee` (default `0.05` ETB). Superadmin updates via [Admin configs](#admin-configs).
 

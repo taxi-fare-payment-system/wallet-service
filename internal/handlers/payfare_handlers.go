@@ -135,7 +135,6 @@ func (h *PayFareHandlers) PayFare(c *gin.Context) {
 	ctx := server_utils.WithAuthBearer(c.Request.Context(), c.GetHeader("Authorization"))
 
 	var transferOut payment.TransferResponse
-	var platformFeeTransferOut payment.TransferResponse
 	hook := func(ctx context.Context) error {
 		if h.TripClient == nil {
 			return errors.New("trip client not configured")
@@ -143,7 +142,7 @@ func (h *PayFareHandlers) PayFare(c *gin.Context) {
 		// if err := h.TripClient.ValidateTripActive(ctx, req.TripID); err != nil {
 		// 	return err
 		// }
-		out, err := h.PaymentClient.Transfer(ctx, payment.TransferRequest{
+		transferReq := payment.TransferRequest{
 			Amount:           req.Amount,
 			PayerUserID:      passengerWallet.UserID,
 			SenderWalletID:   passengerWallet.ID,
@@ -154,34 +153,17 @@ func (h *PayFareHandlers) PayFare(c *gin.Context) {
 			SubCityID:        req.SubCityID,
 			AssistantID:      assistant,
 			Message:          strings.TrimSpace(req.Message),
-		})
+		}
+		if platformFee.Cmp(decimal.Zero) > 0 {
+			fee := platformFee.InexactFloat64()
+			transferReq.PlatformFee = &fee
+			transferReq.SystemWalletID = systemWallet.ID
+		}
+		out, err := h.PaymentClient.Transfer(ctx, transferReq)
 		if err != nil {
 			return err
 		}
 		transferOut = out
-
-		if platformFee.Cmp(decimal.Zero) > 0 {
-			feeMsg := "fare platform fee"
-			if tripID := strings.TrimSpace(req.TripID); tripID != "" {
-				feeMsg = "fare platform fee for trip " + tripID
-			}
-			feeOut, err := h.PaymentClient.Transfer(ctx, payment.TransferRequest{
-				Amount:           platformFee.InexactFloat64(),
-				PayerUserID:      passengerWallet.UserID,
-				SenderWalletID:   passengerWallet.ID,
-				ReceiverWalletID: systemWallet.ID,
-				ReceiverID:       models.SystemWalletUserID,
-				ReceiverFullName: "Platform",
-				TripID:           strings.TrimSpace(req.TripID),
-				SubCityID:        req.SubCityID,
-				AssistantID:      assistant,
-				Message:          feeMsg,
-			})
-			if err != nil {
-				return err
-			}
-			platformFeeTransferOut = feeOut
-		}
 		return nil
 	}
 
@@ -254,6 +236,7 @@ func (h *PayFareHandlers) PayFare(c *gin.Context) {
 
 	auditMeta := map[string]any{
 		"amount":              amountDec.StringFixed(2),
+		"total_charged":       amountDec.Add(platformFee).StringFixed(2),
 		"currency":            "ETB",
 		"trip_id":             strings.TrimSpace(req.TripID),
 		"transaction_id":      transferOut.TransactionID,
@@ -261,8 +244,8 @@ func (h *PayFareHandlers) PayFare(c *gin.Context) {
 		"platform_fee":        platformFee.StringFixed(2),
 		"system_wallet_id":    systemWallet.ID,
 	}
-	if platformFeeTransferOut.TransactionID != "" {
-		auditMeta["platform_fee_transaction_id"] = platformFeeTransferOut.TransactionID
+	if transferOut.PlatformFeeTransactionID != "" {
+		auditMeta["platform_fee_transaction_id"] = transferOut.PlatformFeeTransactionID
 	}
 	if assistant != "" {
 		auditMeta["assistant_id"] = assistant
@@ -280,9 +263,12 @@ func (h *PayFareHandlers) PayFare(c *gin.Context) {
 	}
 	_ = h.Bus.PublishAuditLog(c.Request.Context(), auditEntry)
 
+	totalPaid := amountDec.Add(platformFee).StringFixed(2)
 	amtStr := amountDec.StringFixed(2)
 	meta := map[string]any{
 		"amount":         amtStr,
+		"total_paid":     totalPaid,
+		"platform_fee":   platformFee.StringFixed(2),
 		"currency":       "ETB",
 		"trip_id":        strings.TrimSpace(req.TripID),
 		"transaction_id": transferOut.TransactionID,
@@ -296,7 +282,7 @@ func (h *PayFareHandlers) PayFare(c *gin.Context) {
 		"user_role": "passenger",
 		"type":      "fare_paid",
 		"title":     "Fare Paid",
-		"content":   "You paid " + amtStr + " ETB for your trip.",
+		"content":   "You paid " + totalPaid + " ETB for your trip.",
 		"priority":  "normal",
 		"category":  "billing",
 		"channels":  []string{"push"},

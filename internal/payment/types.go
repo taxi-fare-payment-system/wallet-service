@@ -29,22 +29,25 @@ type InitiateInternalResponse struct {
 }
 
 type TransferRequest struct {
-	Amount           float64 `json:"amount"`
-	PayerUserID      string  `json:"payer_user_id"`
-	SenderWalletID   string  `json:"sender_wallet_id"`
-	ReceiverWalletID string  `json:"receiver_wallet_id"`
-	ReceiverID       string  `json:"receiver_id"`
-	ReceiverFullName string  `json:"receiver_full_name"`
-	TripID           string  `json:"trip_id"`
-	SubCityID        *uint   `json:"sub_city_id,omitempty"`
-	AssistantID      string  `json:"assistant_id,omitempty"`
-	Message          string  `json:"message,omitempty"`
+	Amount           float64  `json:"amount"`
+	PlatformFee      *float64 `json:"platform_fee,omitempty"`
+	SystemWalletID   string   `json:"system_wallet_id,omitempty"`
+	PayerUserID      string   `json:"payer_user_id"`
+	SenderWalletID   string   `json:"sender_wallet_id"`
+	ReceiverWalletID string   `json:"receiver_wallet_id"`
+	ReceiverID       string   `json:"receiver_id"`
+	ReceiverFullName string   `json:"receiver_full_name"`
+	TripID           string   `json:"trip_id"`
+	SubCityID        *uint    `json:"sub_city_id,omitempty"`
+	AssistantID      string   `json:"assistant_id,omitempty"`
+	Message          string   `json:"message,omitempty"`
 }
 
 type TransferResponse struct {
-	TransactionID string  `json:"transaction_id"`
-	TxRef         string  `json:"tx_ref"`
-	ReceiptURL    *string `json:"receipt_url"`
+	TransactionID            string  `json:"transaction_id"`
+	PlatformFeeTransactionID string  `json:"platform_fee_transaction_id,omitempty"`
+	TxRef                    string  `json:"tx_ref"`
+	ReceiptURL               *string `json:"receipt_url"`
 }
 
 type TransactionsListResponse struct {
