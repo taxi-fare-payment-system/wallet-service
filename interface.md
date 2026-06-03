@@ -245,7 +245,7 @@ Atomically:
 1. Debits passenger wallet: **fare + platform fee** (e.g. 20.07 ETB total when fare is 20 and fee is 0.07)
 2. Credits driver wallet: **fare** only (20 ETB)
 3. Credits system wallet: **platform fee** only (0.07 ETB)
-4. Records one Payment transfer (passenger → driver) with `amount` = **fare + platform fee** (total passenger debit) and optional `platform_fee` + `system_wallet_id` for the system ledger line; API responses include `amount`, `fare_amount`, and `platform_fee` when applicable
+4. Records one Payment transfer (passenger → driver) with `amount` = **fare** (driver credit) and optional `platform_fee` + `system_wallet_id` for the system ledger line. Transaction API: passengers (sender) see `amount` / `total_charged` as fare + fee; drivers (receiver) see `amount` as fare only
 5. Publishes analytics, audit (`wallet.fare_paid`), and notification events
 
 **Platform fee**: config key `fare_platform_fee` (default `0.05` ETB). Superadmin updates via [Admin configs](#admin-configs).

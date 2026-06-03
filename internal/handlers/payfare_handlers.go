@@ -142,9 +142,8 @@ func (h *PayFareHandlers) PayFare(c *gin.Context) {
 		// if err := h.TripClient.ValidateTripActive(ctx, req.TripID); err != nil {
 		// 	return err
 		// }
-		totalCharged := amountDec.Add(platformFee)
 		transferReq := payment.TransferRequest{
-			Amount:           totalCharged.InexactFloat64(),
+			Amount:           req.Amount,
 			PayerUserID:      passengerWallet.UserID,
 			SenderWalletID:   passengerWallet.ID,
 			ReceiverWalletID: driverWallet.ID,
