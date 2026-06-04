@@ -32,6 +32,7 @@ type payFareRequest struct {
 	DriverWalletID   string  `json:"driver_wallet_id"`
 	TripID           string  `json:"trip_id"`
 	ReceiverFullName string  `json:"receiver_full_name"`
+	SenderFullName   string  `json:"sender_full_name"`
 	SubCityID        *uint   `json:"sub_city_id,omitempty"`
 	AssistantID      string  `json:"assistant_id"`
 	Message          string  `json:"message,omitempty"`
@@ -149,6 +150,7 @@ func (h *PayFareHandlers) PayFare(c *gin.Context) {
 			ReceiverWalletID: driverWallet.ID,
 			ReceiverID:       driverWallet.UserID,
 			ReceiverFullName: strings.TrimSpace(req.ReceiverFullName),
+			SenderFullName:   strings.TrimSpace(req.SenderFullName),
 			TripID:           strings.TrimSpace(req.TripID),
 			SubCityID:        req.SubCityID,
 			AssistantID:      assistant,

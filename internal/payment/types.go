@@ -37,6 +37,7 @@ type TransferRequest struct {
 	ReceiverWalletID string   `json:"receiver_wallet_id"`
 	ReceiverID       string   `json:"receiver_id"`
 	ReceiverFullName string   `json:"receiver_full_name"`
+	SenderFullName   string   `json:"sender_full_name"`
 	TripID           string   `json:"trip_id"`
 	SubCityID        *uint    `json:"sub_city_id,omitempty"`
 	AssistantID      string   `json:"assistant_id,omitempty"`

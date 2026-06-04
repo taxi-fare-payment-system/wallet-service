@@ -41,7 +41,7 @@ type withdrawRequest struct {
 func bankCodeValid(list payment.ChapaBanksResponse, code string) bool {
 	code = strings.TrimSpace(code)
 	for _, it := range list.Items {
-		if strings.TrimSpace(it.Code) == code {
+		if strings.TrimSpace(it.ID) == code {
 			return true
 		}
 	}
